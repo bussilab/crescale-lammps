@@ -38,6 +38,9 @@ class FixPressCRescale : public Fix {
   int dimension,which;
   double bulkmodulus;
 
+  double t_start,t_stop;
+  double t_current,t_ref;
+
   int pstyle,pcouple,allremap;
   int p_flag[6];                   // 1 if control P on this dim, 0 if not
   double p_start[6],p_stop[6];
@@ -59,6 +62,7 @@ class FixPressCRescale : public Fix {
   void couple();
   void remap();
 
+  void compute_temp_target();
   void matrix_prod(double*, double*, double*);
   void vector_matrix_prod(double*, double*, double*);
   void inverse_matrix(double*, double*);

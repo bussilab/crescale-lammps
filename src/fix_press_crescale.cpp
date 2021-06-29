@@ -74,6 +74,15 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
   int seed = 0;
 
   while (iarg < narg) {
+    if (strcmp(arg[iarg],"temp") == 0) {
+      if (iarg+3 > narg) error->all(FLERR,"Illegal fix press/crescale command");
+      t_start = utils::numeric(FLERR,arg[iarg+1],false,lmp);
+      t_target = t_start;
+      t_stop = utils::numeric(FLERR,arg[iarg+2],false,lmp);
+      if (t_start <= 0.0 || t_stop <= 0.0)
+        error->all(FLERR,"Target temperature for fix press/crescale cannot be 0.0");
+      iarg += 3;
+    }
     if (strcmp(arg[iarg],"iso") == 0) {
       if (iarg+4 > narg)
         error->all(FLERR,"Illegal fix press/crescale command");
@@ -434,13 +443,11 @@ void FixPressCRescale::end_of_step()
 {
   // compute new T,P
   
-  double temp_ref;
-  temp_ref = temperature->compute_scalar();
+  compute_temp_target();
   if (pstyle == ISO) {
     temperature->compute_scalar();
     pressure->compute_scalar();
   } else {
-    temperature->compute_scalar();
     temperature->compute_vector();
     pressure->compute_vector();
   }
@@ -452,9 +459,21 @@ void FixPressCRescale::end_of_step()
   double volume = (domain->boxhi[0] - domain->boxlo[0]) * (domain->boxhi[1] - domain->boxlo[1]);
   if (dimension == 3) volume *= (domain->boxhi[2] - domain->boxlo[2]);
 
-  double noise_prefactor = sqrt(2.0*force->boltz*temp_ref*update->dt/(3.0*bulkmodulus*volume));
+  double noise_prefactor = sqrt(2.0*force->boltz*t_ref*update->dt/(3.0*bulkmodulus*volume));
 
-  if (p_flag[3] || p_flag[4] || p_flag[5]) {
+  if (pstyle != TRICLINIC) {
+    for (int i = 0; i < 3; i++) {
+      if (p_flag[i]) {
+        p_target[i] = p_start[i] + delta * (p_stop[i]-p_start[i]);
+        //dilation[i] =
+          //pow(1.0 - update->dt/p_period[i] *
+             //(p_target[i]-p_current[i])/bulkmodulus,1.0/3.0);
+        dilation[i] = 1.0 - update->dt/(3.0*p_period[i]*bulkmodulus) * 
+             (p_target[i]-p_current[i]-force->boltz*t_ref/volume) + 
+             noise_prefactor * randoms[i];
+      }
+    }
+  } else {
     double *h = domain->h; // Voigt order: xx, yy, zz, yz, xz, xy
     double *h_inv = domain->h_inv;
     double deltah[6] = {0.0,0.0,0.0,0.0,0.0,0.0};
@@ -462,7 +481,7 @@ void FixPressCRescale::end_of_step()
       p_target[i] = p_start[i] + delta * (p_stop[i]-p_start[i]);
       if (p_flag[i]) {
         deltah[i] = - update->dt/(3.0*p_period[i]*bulkmodulus) * h[i] *
-             (p_target[i]-p_current[i]-force->boltz*temp_ref/volume) +
+             (p_target[i]-p_current[i]-force->boltz*t_ref/volume) +
              noise_prefactor/sqrt(p_period[i]) * h[i] * randoms[i];
       }
     }
@@ -471,15 +490,15 @@ void FixPressCRescale::end_of_step()
     }
     if (p_flag[3]) 
       deltah[3] = - update->dt/(3.0*p_period[3]*bulkmodulus) * 
-           ((p_target[1]-p_current[1]-force->boltz*temp_ref/volume)*h[3] + (p_target[3]-p_current[3])*h[2]) +
+           ((p_target[1]-p_current[1]-force->boltz*t_ref/volume)*h[3] + (p_target[3]-p_current[3])*h[2]) +
            noise_prefactor/sqrt(p_period[3]) * (randoms[1]*h[3] + randoms[3]*h[2]);
     if (p_flag[4])
       deltah[4] = - update->dt/(3.0*p_period[4]*bulkmodulus) * 
-           ((p_target[0]-p_current[0]-force->boltz*temp_ref/volume)*h[4] +(p_target[5]-p_current[5])*h[3] + (p_target[4]-p_current[4])*h[2]) +
+           ((p_target[0]-p_current[0]-force->boltz*t_ref/volume)*h[4] +(p_target[5]-p_current[5])*h[3] + (p_target[4]-p_current[4])*h[2]) +
            noise_prefactor/sqrt(p_period[4]) * (randoms[0]*h[4] + randoms[5]*h[3] + randoms[4]*h[2]);
     if (p_flag[5])
       deltah[5] = - update->dt/(3.0*p_period[5]*bulkmodulus) * 
-           ((p_target[0]-p_current[0]-force->boltz*temp_ref/volume)*h[5] + (p_target[5]-p_current[5])*h[1]) +
+           ((p_target[0]-p_current[0]-force->boltz*t_ref/volume)*h[5] + (p_target[5]-p_current[5])*h[1]) +
            noise_prefactor/sqrt(p_period[5]) * (randoms[0]*h[5] + randoms[5]*h[1]);
 
     matrix_prod(deltah,h_inv,dilation);
@@ -488,19 +507,6 @@ void FixPressCRescale::end_of_step()
       dilation[i] += 1.0;
     }
   } 
-  else {
-    for (int i = 0; i < 3; i++) {
-      if (p_flag[i]) {
-        p_target[i] = p_start[i] + delta * (p_stop[i]-p_start[i]);
-        //dilation[i] =
-          //pow(1.0 - update->dt/p_period[i] *
-             //(p_target[i]-p_current[i])/bulkmodulus,1.0/3.0);
-        dilation[i] = 1.0 - update->dt/(3.0*p_period[i]*bulkmodulus) * 
-             (p_target[i]-p_current[i]-force->boltz*temp_ref/volume) + 
-             noise_prefactor * randoms[i];
-      }
-    }
-  }
 
   // remap simulation box and atoms
   // redo KSpace coeffs since volume has changed
@@ -607,7 +613,6 @@ void FixPressCRescale::remap()
       if (p_flag[i]) {
         oldlo = domain->boxlo[i];
         oldhi = domain->boxhi[i];
-        //ctr = 0.5 * (oldlo + oldhi);
         domain->boxlo[i] = (oldlo-fixedpoint[i])*dilation[i] + fixedpoint[i];
         domain->boxhi[i] = (oldhi-fixedpoint[i])*dilation[i] + fixedpoint[i];       
       }
@@ -615,11 +620,10 @@ void FixPressCRescale::remap()
 
     // rescale velocities
 
-    for (i = 0; i < nlocal; i++) {
-      v[i][0] /= dilation[i];
-      v[i][1] /= dilation[i];
-      v[i][2] /= dilation[i];
-    }
+    for (i = 0; i < nlocal; i++)
+      for (j = 0; j < 3; j++) 
+        if (p_flag[j]) 
+          v[i][j] /= dilation[j];
   } 
   else {
     double *h = domain->h;
@@ -725,6 +729,18 @@ int FixPressCRescale::modify_param(int narg, char **arg)
     return 2;
   }
   return 0;
+}
+
+/* ---------------------------------------------------------------------- */
+
+void FixPressCRescale::compute_temp_target()
+{
+  // compute reference temperature (target temperature of thermostat)
+
+  double delta = update->ntimestep - update->beginstep;
+  if (delta != 0.0) delta /= update->endstep - update->beginstep;
+
+  t_ref = t_start + delta * (t_stop-t_start);
 }
 
 /* ---------------------------------------------------------------------- */
