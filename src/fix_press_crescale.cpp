@@ -71,7 +71,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
   dimension = domain->dimension;
 
   int iarg = 3;
-  int seed = 0;
+  int seed = 1998;
 
   while (iarg < narg) {
     if (strcmp(arg[iarg],"temp") == 0) {
@@ -211,7 +211,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
     } else if (strcmp(arg[iarg],"seed") == 0) {
       if (iarg+2 > narg)
         error->all(FLERR,"Illegal fix press/crescale command");
-      seed = utils::inumeric(FLERR,arg[6],false,lmp);
+      seed = utils::inumeric(FLERR,arg[iarg+1],false,lmp);
       if (seed <= 0) error->all(FLERR,"Illegal fix temp/csvr command");
       iarg += 2;
     } else if (strcmp(arg[iarg],"fixedpoint") == 0) {
