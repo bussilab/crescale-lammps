@@ -39,7 +39,7 @@ class FixPressCRescale : public Fix {
   double bulkmodulus;
 
   double t_start,t_stop;
-  double t_current,t_ref;
+  double t_target;
 
   int pstyle,pcouple,allremap;
   int p_flag[6];                   // 1 if control P on this dim, 0 if not
