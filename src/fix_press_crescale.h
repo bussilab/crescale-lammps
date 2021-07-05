@@ -139,4 +139,11 @@ E: Fix_modify pressure ID does not compute pressure
 
 The compute ID assigned to the fix must compute pressure.
 
+E: Cannot use fix press/crescale without temp specification
+
+'temp' keyword must be used in the form 
+    fix press/berendsen ... temp tstart tstop
+where tstart and tstop are the starting and final temperatures of 
+the thermostat coupled with CRescale
+
 */

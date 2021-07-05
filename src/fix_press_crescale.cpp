@@ -75,15 +75,6 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
   t_start = t_target = t_stop = -1;
 
   while (iarg < narg) {
-    if (strcmp(arg[iarg],"temp") == 0) {
-      if (iarg+3 > narg) error->all(FLERR,"Illegal fix press/crescale command");
-      t_start = utils::numeric(FLERR,arg[iarg+1],false,lmp);
-      t_target = t_start;
-      t_stop = utils::numeric(FLERR,arg[iarg+2],false,lmp);
-      if (t_start <= 0.0 || t_stop <= 0.0)
-        error->all(FLERR,"Target temperature for fix press/crescale cannot be 0.0");
-      iarg += 3;
-    }
     if (strcmp(arg[iarg],"iso") == 0) {
       if (iarg+4 > narg)
         error->all(FLERR,"Illegal fix press/crescale command");
@@ -195,6 +186,14 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
       else if (strcmp(arg[iarg+1],"none") == 0) pcouple = NONE;
       else error->all(FLERR,"Illegal fix press/crescale command");
       iarg += 2;
+    } else if (strcmp(arg[iarg],"temp") == 0) {
+      if (iarg+3 > narg) error->all(FLERR,"Illegal fix press/crescale command");
+      t_start = utils::numeric(FLERR,arg[iarg+1],false,lmp);
+      t_target = t_start;
+      t_stop = utils::numeric(FLERR,arg[iarg+2],false,lmp);
+      if (t_start <= 0.0 || t_stop <= 0.0)
+        error->all(FLERR,"Target temperature for fix press/crescale cannot be 0.0");
+      iarg += 3;
     } else if (strcmp(arg[iarg],"modulus") == 0) {
       if (iarg+2 > narg)
         error->all(FLERR,"Illegal fix press/crescale command");
@@ -474,7 +473,7 @@ void FixPressCRescale::end_of_step()
              //(p_target[i]-p_current[i])/bulkmodulus,1.0/3.0);
         dilation[i] = 1.0 - update->dt/(3.0*p_period[i]*bulkmodulus) * 
              (p_target[i]-p_current[i]-force->boltz*t_target/volume) + 
-             noise_prefactor * randoms[i];
+             noise_prefactor/sqrt(p_period[i]) * randoms[i];
       }
     }
   } else {
@@ -639,9 +638,9 @@ void FixPressCRescale::remap()
       domain->boxlo[i] = fixedpoint[i] - 0.5*h[i];
       domain->boxhi[i] = fixedpoint[i] + 0.5*h[i];
     }    
-    domain->yz = h_rescaled[3];
-    domain->xz = h_rescaled[4];
-    domain->xy = h_rescaled[5];
+    domain->yz = h[3];
+    domain->xz = h[4];
+    domain->xy = h[5];
 
     if (domain->yz < -TILTMAX*domain->yprd ||
       domain->yz > TILTMAX*domain->yprd ||
