@@ -37,6 +37,7 @@ class FixPressCRescale : public Fix {
  protected:
   int dimension,which;
   double bulkmodulus;
+  double kt;
 
   double t_start,t_stop;
   double t_target;
@@ -46,7 +47,7 @@ class FixPressCRescale : public Fix {
   double p_start[6],p_stop[6];
   double p_period[6],p_target[6];
   double p_current[6],dilation[6];
-  double factor[6];
+  //double factor[6];
   double randoms[6];
   int kspace_flag;                 // 1 if KSpace invoked, 0 if not
   int nrigid;                      // number of rigid fixes
@@ -56,6 +57,9 @@ class FixPressCRescale : public Fix {
   class Compute *temperature,*pressure;
   int tflag,pflag;
 
+  double p_hydro;                  // hydrostatic target pressure
+  int pdim;                        // number of barostatted dims
+
   class RanMars *random;
   double fixedpoint[3];            // location of dilation fixed-point
 
@@ -63,6 +67,7 @@ class FixPressCRescale : public Fix {
   void remap();
 
   void compute_temp_target();
+  void compute_press_target();
   void matrix_prod(double*, double*, double*);
   void vector_matrix_prod(double*, double*, double*);
   void inverse_matrix(double*, double*);

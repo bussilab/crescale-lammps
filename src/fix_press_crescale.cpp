@@ -407,6 +407,8 @@ void FixPressCRescale::init()
     error->all(FLERR,"Pressure ID for fix press/crescale does not exist");
   pressure = modify->compute[icompute];
 
+  pdim = p_flag[0] + p_flag[1] + p_flag[2];
+
   // Kspace setting
 
   if (force->kspace) kspace_flag = 1;
@@ -459,20 +461,28 @@ void FixPressCRescale::end_of_step()
   double delta = update->ntimestep - update->beginstep;
   if (delta != 0.0) delta /= update->endstep - update->beginstep;
 
-  double volume = (domain->boxhi[0] - domain->boxlo[0]) * (domain->boxhi[1] - domain->boxlo[1]);
-  if (dimension == 3) volume *= (domain->boxhi[2] - domain->boxlo[2]);
+  /*double volume = (domain->boxhi[0] - domain->boxlo[0]) * (domain->boxhi[1] - domain->boxlo[1]);
+  if (dimension == 3) volume *= (domain->boxhi[2] - domain->boxlo[2]);*/
 
-  double noise_prefactor = sqrt(2.0*force->boltz*t_target*update->dt/(3.0*bulkmodulus*volume));
+  double volume;
+  if (dimension == 3) volume = domain->xprd * domain->yprd * domain->zprd;
+  else volume = domain->xprd * domain->yprd; 
+ 
+  kt = force->boltz * t_target;
+  double noise_prefactor = sqrt(2.0*kt*update->dt/(pdim*bulkmodulus*volume));
 
+  compute_press_target();
   if (pstyle != TRICLINIC) {
+    dilation[0] = dilation[1] = dilation[2] = 1.0;
+    dilation[3] = dilation[4] = dilation[5] = 0.0;
     for (int i = 0; i < 3; i++) {
       if (p_flag[i]) {
-        p_target[i] = p_start[i] + delta * (p_stop[i]-p_start[i]);
+        //p_target[i] = p_start[i] + delta * (p_stop[i]-p_start[i]);
         //dilation[i] =
           //pow(1.0 - update->dt/p_period[i] *
              //(p_target[i]-p_current[i])/bulkmodulus,1.0/3.0);
-        dilation[i] = 1.0 - update->dt/(3.0*p_period[i]*bulkmodulus) * 
-             (p_target[i]-p_current[i]-force->boltz*t_target/volume) + 
+        dilation[i] += - update->dt/(3.0*p_period[i]*bulkmodulus) * 
+             (p_hydro-p_current[i]-kt/volume) + 
              noise_prefactor/sqrt(p_period[i]) * randoms[i];
       }
     }
@@ -483,25 +493,25 @@ void FixPressCRescale::end_of_step()
     for (int i = 0; i < 3; i++) {
       p_target[i] = p_start[i] + delta * (p_stop[i]-p_start[i]);
       if (p_flag[i]) {
-        deltah[i] = - update->dt/(3.0*p_period[i]*bulkmodulus) * h[i] *
-             (p_target[i]-p_current[i]-force->boltz*t_target/volume) +
+        deltah[i] = - update->dt/(pdim*p_period[i]*bulkmodulus) * h[i] *
+             (p_hydro-p_current[i]-kt/volume) +
              noise_prefactor/sqrt(p_period[i]) * h[i] * randoms[i];
       }
     }
-    for (int i = 3; i < 6; i++) {
+    /*for (int i = 3; i < 6; i++) {
       p_target[i] = p_start[i] + delta * (p_stop[i]-p_start[i]);
-    }
+    }*/
     if (p_flag[3]) 
-      deltah[3] = - update->dt/(3.0*p_period[3]*bulkmodulus) * 
-           ((p_target[1]-p_current[1]-force->boltz*t_target/volume)*h[3] + (p_target[3]-p_current[3])*h[2]) +
+      deltah[3] = - update->dt/(pdim*p_period[3]*bulkmodulus) * 
+           ((p_hydro-p_current[1]-kt/volume)*h[3] - p_current[3]*h[2]) +
            noise_prefactor/sqrt(p_period[3]) * (randoms[1]*h[3] + randoms[3]*h[2]);
     if (p_flag[4])
-      deltah[4] = - update->dt/(3.0*p_period[4]*bulkmodulus) * 
-           ((p_target[0]-p_current[0]-force->boltz*t_target/volume)*h[4] +(p_target[5]-p_current[5])*h[3] + (p_target[4]-p_current[4])*h[2]) +
+      deltah[4] = - update->dt/(pdim*p_period[4]*bulkmodulus) * 
+           ((p_hydro-p_current[0]-kt/volume)*h[4] - p_current[5]*h[3] - p_current[4]*h[2]) +
            noise_prefactor/sqrt(p_period[4]) * (randoms[0]*h[4] + randoms[5]*h[3] + randoms[4]*h[2]);
     if (p_flag[5])
-      deltah[5] = - update->dt/(3.0*p_period[5]*bulkmodulus) * 
-           ((p_target[0]-p_current[0]-force->boltz*t_target/volume)*h[5] + (p_target[5]-p_current[5])*h[1]) +
+      deltah[5] = - update->dt/(pdim*p_period[5]*bulkmodulus) * 
+           ((p_hydro-p_current[0]-kt/volume)*h[5] - p_current[5]*h[1]) +
            noise_prefactor/sqrt(p_period[5]) * (randoms[0]*h[5] + randoms[5]*h[1]);
 
     matrix_prod(deltah,h_inv,dilation);
@@ -623,10 +633,25 @@ void FixPressCRescale::remap()
 
     // rescale velocities
 
-    for (i = 0; i < nlocal; i++)
-      for (j = 0; j < 3; j++) 
-        if (p_flag[j]) 
-          v[i][j] /= dilation[j];
+    if (which == NOBIAS) {
+      for (i = 0; i < nlocal; i++) {
+        if (mask[i] & groupbit) {
+          v[i][0] /= dilation[0];
+          v[i][1] /= dilation[1];
+          v[i][2] /= dilation[2];
+        }
+      }
+    } else if (which == BIAS) {
+      for (i = 0; i < nlocal; i++) {
+        if (mask[i] & groupbit) {
+          temperature->remove_bias(i,v[i]);
+          v[i][0] /= dilation[0];
+          v[i][1] /= dilation[1];
+          v[i][2] /= dilation[2];
+          temperature->remove_bias(i,v[i]);
+        }
+      }
+    }
   } 
   else {
     double *h = domain->h;
@@ -656,12 +681,27 @@ void FixPressCRescale::remap()
     double v_rescaled[3] = {};
     double dilation_inv[6] = {};
     inverse_matrix(dilation,dilation_inv);
-    for (i = 0; i < nlocal; i++) {
-      vector_matrix_prod(v[i],dilation_inv,v_rescaled);    
-      v[i][0] = v_rescaled[0];
-      v[i][1] = v_rescaled[1];
-      v[i][2] = v_rescaled[2];
-    }
+    if (which == NOBIAS) {
+      for (i = 0; i < nlocal; i++) {
+        if (mask[i] & groupbit) {
+          vector_matrix_prod(v[i],dilation_inv,v_rescaled);    
+          v[i][0] = v_rescaled[0];
+          v[i][1] = v_rescaled[1];
+          v[i][2] = v_rescaled[2];
+        }
+      }
+    } else if (which == BIAS) {
+      for (i = 0; i < nlocal; i++) {
+        if (mask[i] & groupbit) {
+          temperature->remove_bias(i,v[i]);
+          vector_matrix_prod(v[i],dilation_inv,v_rescaled);    
+          v[i][0] = v_rescaled[0];
+          v[i][1] = v_rescaled[1];
+          v[i][2] = v_rescaled[2];
+          temperature->remove_bias(i,v[i]);
+        }
+      }
+    }  
   }
 
   domain->set_global_box();
@@ -785,4 +825,22 @@ void FixPressCRescale::inverse_matrix(double *in, double *out)
   out[3] = -in[3] / (in[1]*in[2]);
   out[4] = (in[3]*in[5] - in[1]*in[4]) / (in[0]*in[1]*in[2]);
   out[5] = -in[5] / (in[0]*in[1]);
+}
+
+void FixPressCRescale::compute_press_target()
+{
+  double delta = update->ntimestep - update->beginstep;
+  if (delta != 0.0) delta /= update->endstep - update->beginstep;
+
+  p_hydro = 0.0;
+  for (int i = 0; i < 3; i++)
+    if (p_flag[i]) {
+      p_target[i] = p_start[i] + delta * (p_stop[i]-p_start[i]);
+      p_hydro += p_target[i];
+    }
+  if (pdim > 0) p_hydro /= pdim;
+
+  if (pstyle == TRICLINIC)
+    for (int i = 3; i < 6; i++)
+      p_target[i] = p_start[i] + delta * (p_stop[i]-p_start[i]);
 }
