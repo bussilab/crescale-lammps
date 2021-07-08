@@ -64,7 +64,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
 
   fixedpoint[0] = 0.5*(domain->boxlo[0]+domain->boxhi[0]);
   fixedpoint[1] = 0.5*(domain->boxlo[1]+domain->boxhi[1]);
-  fixedpoint[2] = 0.5*(domain->boxlo[2]+domain->boxhi[2]);*/
+  fixedpoint[2] = 0.5*(domain->boxlo[2]+domain->boxhi[2]);
 
   // process keywords
 
@@ -614,7 +614,7 @@ void FixPressCRescale::remap()
         oldlo = domain->boxlo[i];
         oldhi = domain->boxhi[i];
         domain->boxlo[i] = (oldlo-fixedpoint[i])*dilation[i] + fixedpoint[i];
-        domain->boxhi[i] = (oldhi-fixedpoint[i])*dilation[i] + fixedpoint[i];*/     
+        domain->boxhi[i] = (oldhi-fixedpoint[i])*dilation[i] + fixedpoint[i];   
       }
     }
 
