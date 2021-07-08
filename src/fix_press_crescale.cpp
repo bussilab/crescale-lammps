@@ -42,7 +42,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
   Fix(lmp, narg, arg),
   id_temp(nullptr), id_press(nullptr), random(nullptr), tflag(0), pflag(0)
 {
-  if (narg < 5) error->all(FLERR,"Illegal fix press/crescale command");
+  if (narg < 8) error->all(FLERR,"Illegal fix press/crescale command");
 
   // CRescale barostat applied every step
 
@@ -64,7 +64,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
 
   fixedpoint[0] = 0.5*(domain->boxlo[0]+domain->boxhi[0]);
   fixedpoint[1] = 0.5*(domain->boxlo[1]+domain->boxhi[1]);
-  fixedpoint[2] = 0.5*(domain->boxlo[2]+domain->boxhi[2]);
+  fixedpoint[2] = 0.5*(domain->boxlo[2]+domain->boxhi[2]);*/
 
   // process keywords
 
@@ -187,7 +187,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
       else error->all(FLERR,"Illegal fix press/crescale command");
       iarg += 2;
     } else if (strcmp(arg[iarg],"temp") == 0) {
-      if (iarg+3 > narg) error->all(FLERR,"Illegal fix press/crescale command");
+      if (iarg+3 > narg) error->all(FLERR,"Illegal fix press/crescale command");    
       t_start = utils::numeric(FLERR,arg[iarg+1],false,lmp);
       t_target = t_start;
       t_stop = utils::numeric(FLERR,arg[iarg+2],false,lmp);
@@ -461,15 +461,11 @@ void FixPressCRescale::end_of_step()
   double delta = update->ntimestep - update->beginstep;
   if (delta != 0.0) delta /= update->endstep - update->beginstep;
 
-  /*double volume = (domain->boxhi[0] - domain->boxlo[0]) * (domain->boxhi[1] - domain->boxlo[1]);
-  if (dimension == 3) volume *= (domain->boxhi[2] - domain->boxlo[2]);*/
-
   double volume;
   if (dimension == 3) volume = domain->xprd * domain->yprd * domain->zprd;
-  else volume = domain->xprd * domain->yprd; 
- 
-  kt = force->boltz * t_target;
-  double noise_prefactor = sqrt(2.0*kt*update->dt/(pdim*bulkmodulus*volume));
+  else volume = domain->xprd * domain->yprd;  
+  double ktv = force->boltz * t_target / volume * force->nktv2p;
+  double noise_prefactor = sqrt(2.0*ktv*update->dt/(pdim*bulkmodulus));
 
   compute_press_target();
   if (pstyle != TRICLINIC) {
@@ -477,12 +473,7 @@ void FixPressCRescale::end_of_step()
     dilation[3] = dilation[4] = dilation[5] = 0.0;
     for (int i = 0; i < 3; i++) {
       if (p_flag[i]) {
-        //p_target[i] = p_start[i] + delta * (p_stop[i]-p_start[i]);
-        //dilation[i] =
-          //pow(1.0 - update->dt/p_period[i] *
-             //(p_target[i]-p_current[i])/bulkmodulus,1.0/3.0);
-        dilation[i] += - update->dt/(3.0*p_period[i]*bulkmodulus) * 
-             (p_hydro-p_current[i]-kt/volume) + 
+        dilation[i] += - update->dt/(pdim*p_period[i]*bulkmodulus) * (p_hydro-p_current[i]-ktv) + 
              noise_prefactor/sqrt(p_period[i]) * randoms[i];
       }
     }
@@ -493,25 +484,21 @@ void FixPressCRescale::end_of_step()
     for (int i = 0; i < 3; i++) {
       p_target[i] = p_start[i] + delta * (p_stop[i]-p_start[i]);
       if (p_flag[i]) {
-        deltah[i] = - update->dt/(pdim*p_period[i]*bulkmodulus) * h[i] *
-             (p_hydro-p_current[i]-kt/volume) +
+        deltah[i] = - update->dt/(pdim*p_period[i]*bulkmodulus)* h[i] * (p_hydro-p_current[i]-ktv) +           
              noise_prefactor/sqrt(p_period[i]) * h[i] * randoms[i];
       }
     }
-    /*for (int i = 3; i < 6; i++) {
-      p_target[i] = p_start[i] + delta * (p_stop[i]-p_start[i]);
-    }*/
-    if (p_flag[3]) 
+    //if (p_flag[3]) 
       deltah[3] = - update->dt/(pdim*p_period[3]*bulkmodulus) * 
-           ((p_hydro-p_current[1]-kt/volume)*h[3] - p_current[3]*h[2]) +
+           ((p_hydro-p_current[1]-ktv)*h[3] - p_current[3]*h[2]) +
            noise_prefactor/sqrt(p_period[3]) * (randoms[1]*h[3] + randoms[3]*h[2]);
-    if (p_flag[4])
+    //if (p_flag[4])
       deltah[4] = - update->dt/(pdim*p_period[4]*bulkmodulus) * 
-           ((p_hydro-p_current[0]-kt/volume)*h[4] - p_current[5]*h[3] - p_current[4]*h[2]) +
+           ((p_hydro-p_current[0]-ktv)*h[4] - p_current[5]*h[3] - p_current[4]*h[2]) +
            noise_prefactor/sqrt(p_period[4]) * (randoms[0]*h[4] + randoms[5]*h[3] + randoms[4]*h[2]);
-    if (p_flag[5])
+    //if (p_flag[5])
       deltah[5] = - update->dt/(pdim*p_period[5]*bulkmodulus) * 
-           ((p_hydro-p_current[0]-kt/volume)*h[5] - p_current[5]*h[1]) +
+           ((p_hydro-p_current[0]-ktv)*h[5] - p_current[5]*h[1]) +
            noise_prefactor/sqrt(p_period[5]) * (randoms[0]*h[5] + randoms[5]*h[1]);
 
     matrix_prod(deltah,h_inv,dilation);
@@ -627,7 +614,7 @@ void FixPressCRescale::remap()
         oldlo = domain->boxlo[i];
         oldhi = domain->boxhi[i];
         domain->boxlo[i] = (oldlo-fixedpoint[i])*dilation[i] + fixedpoint[i];
-        domain->boxhi[i] = (oldhi-fixedpoint[i])*dilation[i] + fixedpoint[i];       
+        domain->boxhi[i] = (oldhi-fixedpoint[i])*dilation[i] + fixedpoint[i];*/     
       }
     }
 
