@@ -474,7 +474,7 @@ void FixPressCRescale::end_of_step()
     for (int i = 0; i < 3; i++) {
       if (p_flag[i]) {
         dilation[i] += - update->dt/(pdim*p_period[i]*bulkmodulus) * (p_hydro-p_current[i]-ktv) + 
-             0.0*noise_prefactor/sqrt(p_period[i]) * randoms[i];
+             noise_prefactor/sqrt(p_period[i]) * randoms[i];
       }
     }
   } else {
@@ -675,7 +675,7 @@ void FixPressCRescale::remap()
           vector_matrix_prod(v[i],dilation_inv,v_rescaled);    
           v[i][0] = v_rescaled[0];
           v[i][1] = v_rescaled[1];
-          v[i][2] = v_rescaled[2];nri
+          v[i][2] = v_rescaled[2];
         }
       }
     } else if (which == BIAS) {
