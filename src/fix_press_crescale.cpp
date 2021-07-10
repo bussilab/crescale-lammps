@@ -312,8 +312,8 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
   if (p_flag[3]) box_change |= BOX_CHANGE_YZ;
   if (p_flag[4]) box_change |= BOX_CHANGE_XZ;
   if (p_flag[5]) box_change |= BOX_CHANGE_XY;
-  no_change_box = 1;                    //?????????????????????????????????
-  if (allremap == 0) restart_pbc = 1;   //?????????????????????????????????
+  no_change_box = 1;                    
+  if (allremap == 0) restart_pbc = 1;
 
   // pstyle = TRICLINIC if any off-diagonal term is controlled -> 6 dof
   // else pstyle = ISO if XYZ coupling or XY coupling in 2d -> 1 dof
@@ -474,7 +474,7 @@ void FixPressCRescale::end_of_step()
     for (int i = 0; i < 3; i++) {
       if (p_flag[i]) {
         dilation[i] += - update->dt/(pdim*p_period[i]*bulkmodulus) * (p_hydro-p_current[i]-ktv) + 
-             noise_prefactor/sqrt(p_period[i]) * randoms[i];
+             0.0*noise_prefactor/sqrt(p_period[i]) * randoms[i];
       }
     }
   } else {
@@ -487,17 +487,14 @@ void FixPressCRescale::end_of_step()
         deltah[i] = - update->dt/(pdim*p_period[i]*bulkmodulus)* h[i] * (p_hydro-p_current[i]-ktv) +           
              noise_prefactor/sqrt(p_period[i]) * h[i] * randoms[i];
       }
-    }
-    //if (p_flag[3]) 
-      deltah[3] = - update->dt/(pdim*p_period[3]*bulkmodulus) * 
+    } 
+    deltah[3] = - update->dt/(pdim*p_period[3]*bulkmodulus) * 
            ((p_hydro-p_current[1]-ktv)*h[3] - p_current[3]*h[2]) +
            noise_prefactor/sqrt(p_period[3]) * (randoms[1]*h[3] + randoms[3]*h[2]);
-    //if (p_flag[4])
-      deltah[4] = - update->dt/(pdim*p_period[4]*bulkmodulus) * 
+    deltah[4] = - update->dt/(pdim*p_period[4]*bulkmodulus) * 
            ((p_hydro-p_current[0]-ktv)*h[4] - p_current[5]*h[3] - p_current[4]*h[2]) +
            noise_prefactor/sqrt(p_period[4]) * (randoms[0]*h[4] + randoms[5]*h[3] + randoms[4]*h[2]);
-    //if (p_flag[5])
-      deltah[5] = - update->dt/(pdim*p_period[5]*bulkmodulus) * 
+    deltah[5] = - update->dt/(pdim*p_period[5]*bulkmodulus) * 
            ((p_hydro-p_current[0]-ktv)*h[5] - p_current[5]*h[1]) +
            noise_prefactor/sqrt(p_period[5]) * (randoms[0]*h[5] + randoms[5]*h[1]);
 
@@ -507,6 +504,10 @@ void FixPressCRescale::end_of_step()
       dilation[i] += 1.0;
     }
   } 
+
+  for (int i = 0; i < 6; i++) { 
+    MPI_Bcast(&dilation[i],1,MPI_DOUBLE,0,world);
+  }
 
   // remap simulation box and atoms
   // redo KSpace coeffs since volume has changed
@@ -674,7 +675,7 @@ void FixPressCRescale::remap()
           vector_matrix_prod(v[i],dilation_inv,v_rescaled);    
           v[i][0] = v_rescaled[0];
           v[i][1] = v_rescaled[1];
-          v[i][2] = v_rescaled[2];
+          v[i][2] = v_rescaled[2];nri
         }
       }
     } else if (which == BIAS) {
