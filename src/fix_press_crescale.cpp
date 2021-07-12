@@ -312,8 +312,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
   if (p_flag[3]) box_change |= BOX_CHANGE_YZ;
   if (p_flag[4]) box_change |= BOX_CHANGE_XZ;
   if (p_flag[5]) box_change |= BOX_CHANGE_XY;
-  no_change_box = 1;                    
-  if (allremap == 0) restart_pbc = 1;
+  no_change_box = 1;                  
 
   // pstyle = TRICLINIC if any off-diagonal term is controlled -> 6 dof
   // else pstyle = ISO if XYZ coupling or XY coupling in 2d -> 1 dof
@@ -373,6 +372,7 @@ int FixPressCRescale::setmask()
 {
   int mask = 0;
   mask |= END_OF_STEP;
+  //mask |= THERMO_ENERGY;
   return mask;
 }
 
@@ -449,6 +449,7 @@ void FixPressCRescale::end_of_step()
   // compute new T,P
   
   compute_temp_target();
+  
   if (pstyle == ISO) {
     temperature->compute_scalar();
     pressure->compute_scalar();
@@ -456,11 +457,12 @@ void FixPressCRescale::end_of_step()
     temperature->compute_vector();
     pressure->compute_vector();
   }
+  temperature->compute_vector();
+  pressure->compute_vector();
+  
   couple();
 
-  double delta = update->ntimestep - update->beginstep;
-  if (delta != 0.0) delta /= update->endstep - update->beginstep;
-
+  int i;
   double volume;
   if (dimension == 3) volume = domain->xprd * domain->yprd * domain->zprd;
   else volume = domain->xprd * domain->yprd;  
@@ -469,45 +471,42 @@ void FixPressCRescale::end_of_step()
 
   compute_press_target();
   if (pstyle != TRICLINIC) {
-    dilation[0] = dilation[1] = dilation[2] = 1.0;
-    dilation[3] = dilation[4] = dilation[5] = 0.0;
-    for (int i = 0; i < 3; i++) {
+    for (i = 0; i < 3; i++) {
       if (p_flag[i]) {
-        dilation[i] += - update->dt/(pdim*p_period[i]*bulkmodulus) * (p_hydro-p_current[i]-ktv) + 
+        dilation[i] = 1.0 - update->dt/(pdim*p_period[i]*bulkmodulus) * (p_hydro-p_current[i]-ktv) + 
              noise_prefactor/sqrt(p_period[i]) * randoms[i];
       }
+      else
+        dilation[i] = 1.0;
     }
   } else {
     double *h = domain->h; // Voigt order: xx, yy, zz, yz, xz, xy
     double *h_inv = domain->h_inv;
     double deltah[6] = {0.0,0.0,0.0,0.0,0.0,0.0};
-    for (int i = 0; i < 3; i++) {
-      p_target[i] = p_start[i] + delta * (p_stop[i]-p_start[i]);
+    for (i = 0; i < 3; i++) {
       if (p_flag[i]) {
         deltah[i] = - update->dt/(pdim*p_period[i]*bulkmodulus)* h[i] * (p_hydro-p_current[i]-ktv) +           
              noise_prefactor/sqrt(p_period[i]) * h[i] * randoms[i];
       }
-    } 
+    }
     deltah[3] = - update->dt/(pdim*p_period[3]*bulkmodulus) * 
-           ((p_hydro-p_current[1]-ktv)*h[3] - p_current[3]*h[2]) +
-           noise_prefactor/sqrt(p_period[3]) * (randoms[1]*h[3] + randoms[3]*h[2]);
+         ((p_hydro-p_current[1]-ktv)*h[3] - p_current[3]*h[2]) +
+         noise_prefactor/sqrt(p_period[3]) * (randoms[1]*h[3] + randoms[3]*h[2]);
     deltah[4] = - update->dt/(pdim*p_period[4]*bulkmodulus) * 
-           ((p_hydro-p_current[0]-ktv)*h[4] - p_current[5]*h[3] - p_current[4]*h[2]) +
-           noise_prefactor/sqrt(p_period[4]) * (randoms[0]*h[4] + randoms[5]*h[3] + randoms[4]*h[2]);
+         ((p_hydro-p_current[0]-ktv)*h[4] - p_current[5]*h[3] - p_current[4]*h[2]) +
+         noise_prefactor/sqrt(p_period[4]) * (randoms[0]*h[4] + randoms[5]*h[3] + randoms[4]*h[2]);
     deltah[5] = - update->dt/(pdim*p_period[5]*bulkmodulus) * 
-           ((p_hydro-p_current[0]-ktv)*h[5] - p_current[5]*h[1]) +
-           noise_prefactor/sqrt(p_period[5]) * (randoms[0]*h[5] + randoms[5]*h[1]);
+         ((p_hydro-p_current[0]-ktv)*h[5] - p_current[5]*h[1]) +
+         noise_prefactor/sqrt(p_period[5]) * (randoms[0]*h[5] + randoms[5]*h[1]);
 
     matrix_prod(deltah,h_inv,dilation);
     
-    for (int i = 0; i < 3; i++) {
+    for (i = 0; i < 3; i++) {
       dilation[i] += 1.0;
     }
   } 
-
-  for (int i = 0; i < 6; i++) { 
-    MPI_Bcast(&dilation[i],1,MPI_DOUBLE,0,world);
-  }
+ 
+  MPI_Bcast(&dilation[0],6,MPI_DOUBLE,0,world);
 
   // remap simulation box and atoms
   // redo KSpace coeffs since volume has changed
@@ -518,6 +517,7 @@ void FixPressCRescale::end_of_step()
   // trigger virial computation on next timestep
 
   pressure->addstep(update->ntimestep+1);
+
 }
 
 /* ---------------------------------------------------------------------- */
@@ -532,30 +532,30 @@ void FixPressCRescale::couple()
 
   if (pstyle == ISO) {
     p_current[0] = p_current[1] = p_current[2] = pressure->scalar;
-    double ave_rand = 1.0/sqrt(3.0) * (randoms[0] + randoms[1] + randoms[2]);
+    double ave_rand = 1.0/3.0 * (randoms[0] + randoms[1] + randoms[2]);
     randoms[0] = randoms[1] = randoms[2] = ave_rand;
   } else if (pcouple == XYZ) {
     double ave = 1.0/3.0 * (tensor[0] + tensor[1] + tensor[2]);
     p_current[0] = p_current[1] = p_current[2] = ave;
-    double ave_rand = 1.0/sqrt(3.0) * (randoms[0] + randoms[1] + randoms[2]);
+    double ave_rand = 1.0/3.0 * (randoms[0] + randoms[1] + randoms[2]);
     randoms[0] = randoms[1] = randoms[2] = ave_rand;
   } else if (pcouple == XY) {
     double ave = 0.5 * (tensor[0] + tensor[1]);
     p_current[0] = p_current[1] = ave;
     p_current[2] = tensor[2];
-    double ave_rand = sqrt(0.5) * (randoms[0] + randoms[1]);
+    double ave_rand = 0.5 * (randoms[0] + randoms[1]);
     randoms[0] = randoms[1] = ave_rand;
   } else if (pcouple == YZ) {
     double ave = 0.5 * (tensor[1] + tensor[2]);
     p_current[1] = p_current[2] = ave;
     p_current[0] = tensor[0];
-    double ave_rand = sqrt(0.5) * (randoms[1] + randoms[2]);
+    double ave_rand = 0.5 * (randoms[1] + randoms[2]);
     randoms[1] = randoms[2] = ave_rand;
   } else if (pcouple == XZ) {
     double ave = 0.5 * (tensor[0] + tensor[2]);
     p_current[0] = p_current[2] = ave;
     p_current[1] = tensor[1];
-    double ave_rand = sqrt(0.5) * (randoms[0] + randoms[2]);
+    double ave_rand = 0.5 * (randoms[0] + randoms[2]);
     randoms[0] = randoms[2] = ave_rand;
   } else {
     p_current[0] = tensor[0];
@@ -614,8 +614,9 @@ void FixPressCRescale::remap()
       if (p_flag[i]) {
         oldlo = domain->boxlo[i];
         oldhi = domain->boxhi[i];
-        domain->boxlo[i] = (oldlo-fixedpoint[i])*dilation[i] + fixedpoint[i];
-        domain->boxhi[i] = (oldhi-fixedpoint[i])*dilation[i] + fixedpoint[i];   
+        ctr = 0.5 * (oldlo + oldhi);
+        domain->boxlo[i] = (oldlo-fixedpoint[i])*dilation[i] + ctr;
+        domain->boxhi[i] = (oldhi-fixedpoint[i])*dilation[i] + ctr;
       }
     }
 
@@ -648,6 +649,8 @@ void FixPressCRescale::remap()
     h = h_rescaled;
 
     for (i = 0; i < 3; i++) {
+      oldlo = domain->boxlo[i];
+      oldhi = domain->boxhi[i];
       domain->boxlo[i] = fixedpoint[i] - 0.5*h[i];
       domain->boxhi[i] = fixedpoint[i] + 0.5*h[i];
     }    
