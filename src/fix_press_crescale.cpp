@@ -372,7 +372,6 @@ int FixPressCRescale::setmask()
 {
   int mask = 0;
   mask |= END_OF_STEP;
-  //mask |= THERMO_ENERGY;
   return mask;
 }
 
@@ -457,8 +456,6 @@ void FixPressCRescale::end_of_step()
     temperature->compute_vector();
     pressure->compute_vector();
   }
-  temperature->compute_vector();
-  pressure->compute_vector();
   
   couple();
 
@@ -614,9 +611,8 @@ void FixPressCRescale::remap()
       if (p_flag[i]) {
         oldlo = domain->boxlo[i];
         oldhi = domain->boxhi[i];
-        ctr = 0.5 * (oldlo + oldhi);
-        domain->boxlo[i] = (oldlo-fixedpoint[i])*dilation[i] + ctr;
-        domain->boxhi[i] = (oldhi-fixedpoint[i])*dilation[i] + ctr;
+        domain->boxlo[i] = (oldlo-fixedpoint[i])*dilation[i] + fixedpoint[i];
+        domain->boxhi[i] = (oldhi-fixedpoint[i])*dilation[i] + fixedpoint[i];
       }
     }
 
