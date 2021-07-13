@@ -473,10 +473,14 @@ void FixPressCRescale::end_of_step()
   double noise_prefactor = sqrt(2.0*ktv*update->dt/(pdim*bulkmodulus));
 
   compute_press_target();
+  compute_sigma();
+  compute_deviatoric();
+
   if (pstyle != TRICLINIC) {
     for (i = 0; i < 3; i++) {
       if (p_flag[i]) {
-        dilation[i] = 1.0 - update->dt/(pdim*p_period[i]*bulkmodulus) * (p_hydro-p_current[i]-ktv) + 
+        dilation[i] = 
+             1.0 - update->dt/(pdim*p_period[i]*bulkmodulus) * (p_hydro-p_current[i]-ktv+pdev[i]) + 
              noise_prefactor/sqrt(p_period[i]) * randoms[i];
       }
       else
@@ -487,9 +491,7 @@ void FixPressCRescale::end_of_step()
     double *h_inv = domain->h_inv;
     double deltah[6] = {0.0,0.0,0.0,0.0,0.0,0.0};
 
-    compute_sigma();
-    compute_deviatoric();
-    double *pdev_times_h;
+    double pdev_times_h[6];
     matrix_prod(pdev,h,pdev_times_h);
 
     for (i = 0; i < 3; i++) {
@@ -499,13 +501,13 @@ void FixPressCRescale::end_of_step()
       }
     }
     deltah[3] = - update->dt/(pdim*p_period[3]*bulkmodulus) * 
-       (((p_hydro-p_current[1]-ktv)*h[3] - p_current[3]*h[2]) + pdev_times_h[i])  +
+       (((p_hydro-p_current[1]-ktv)*h[3] - p_current[3]*h[2]) + pdev_times_h[3])  +
        noise_prefactor/sqrt(p_period[3]) * (randoms[1]*h[3] + randoms[3]*h[2]);
     deltah[4] = - update->dt/(pdim*p_period[4]*bulkmodulus) * 
-       (((p_hydro-p_current[0]-ktv)*h[4] - p_current[5]*h[3] - p_current[4]*h[2]) + pdev_times_h[i]) +
+       (((p_hydro-p_current[0]-ktv)*h[4] - p_current[5]*h[3] - p_current[4]*h[2]) + pdev_times_h[4]) +
        noise_prefactor/sqrt(p_period[4]) * (randoms[0]*h[4] + randoms[5]*h[3] + randoms[4]*h[2]);
     deltah[5] = - update->dt/(pdim*p_period[5]*bulkmodulus) * 
-       (((p_hydro-p_current[0]-ktv)*h[5] - p_current[5]*h[1]) + pdev_times_h[i]) +
+       (((p_hydro-p_current[0]-ktv)*h[5] - p_current[5]*h[1]) + pdev_times_h[5]) +
        noise_prefactor/sqrt(p_period[5]) * (randoms[0]*h[5] + randoms[5]*h[1]);
 
     matrix_prod(deltah,h_inv,dilation);
@@ -904,7 +906,8 @@ void FixPressCRescale::compute_deviatoric()
 
 void FixPressCRescale::matrix_prod(double *in1, double *in2, double *out) 
 {
-  // compute matrix product in1 * in2 (in1, in2 and output represented in Voigt order)
+  // compute matrix product in1 * in2, where matrices 'in1' and 'in2' are upper triangular
+  // (represented in Voigt order)
 
   out[0] = in1[0] * in2[0];
   out[1] = in1[1] * in2[1];
@@ -918,7 +921,8 @@ void FixPressCRescale::matrix_prod(double *in1, double *in2, double *out)
 
 void FixPressCRescale::vector_matrix_prod(double *in_v, double *in_m, double *out_v) 
 {
-  // compute vector-matrix product in_v * in_m (matrix in_m represented in Voigt order)
+  // compute vector-matrix product in_v * in_m, where 'in_m' is upper triangular
+  // (represented in Voigt order)
 
   out_v[0] = in_v[0] * in_m[0];
   out_v[1] = in_v[0] * in_m[5] + in_v[1] * in_m[1];
@@ -929,7 +933,7 @@ void FixPressCRescale::vector_matrix_prod(double *in_v, double *in_m, double *ou
 
 void FixPressCRescale::inverse_matrix(double *in, double *out) 
 {
-  // invert upper triangular matrix in (represented in Voigt order)
+  // invert upper triangular matrix 'in' (represented in Voigt order)
 
   out[0] = 1/in[0];
   out[1] = 1/in[1];
