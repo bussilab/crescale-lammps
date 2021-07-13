@@ -59,6 +59,11 @@ class FixPressCRescale : public Fix {
   double p_hydro;                  // hydrostatic target pressure
   int pdim;                        // number of barostatted dims
 
+  double sigma[6];                 // scaled target stress
+  double pdev[6];                  // deviatoric force on barostat
+  double h0_inv[6];                // h_inv of reference (zero strain) box
+  int nreset_h0;                   // interval for resetting h0
+
   class RanMars *random;
   double fixedpoint[3];            // location of dilation fixed-point
 
@@ -67,6 +72,8 @@ class FixPressCRescale : public Fix {
 
   void compute_temp_target();
   void compute_press_target();
+  void compute_sigma();
+  void compute_deviatoric();
   void matrix_prod(double*, double*, double*);
   void vector_matrix_prod(double*, double*, double*);
   void inverse_matrix(double*, double*);

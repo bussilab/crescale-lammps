@@ -53,6 +53,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
   pcouple = NONE;
   bulkmodulus = 10.0;
   allremap = 1;
+  nreset_h0 = 0;
 
   for (int i = 0; i < 6; i++) {
     p_start[i] = p_stop[i] = p_period[i] = 0.0;
@@ -213,6 +214,11 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
         error->all(FLERR,"Illegal fix press/crescale command");
       seed = utils::inumeric(FLERR,arg[iarg+1],false,lmp);
       if (seed <= 0) error->all(FLERR,"Illegal fix temp/csvr command");
+      iarg += 2;
+    } else if (strcmp(arg[iarg],"nreset") == 0) {
+      if (iarg+2 > narg) error->all(FLERR,"Illegal fix nvt/npt/nph command");
+      nreset_h0 = utils::inumeric(FLERR,arg[iarg+1],false,lmp);
+      if (nreset_h0 < 0) error->all(FLERR,"Illegal fix nvt/npt/nph command");
       iarg += 2;
     } else if (strcmp(arg[iarg],"fixedpoint") == 0) {
       if (iarg+4 > narg) error->all(FLERR,"Illegal fix press/crescale command");
@@ -480,21 +486,27 @@ void FixPressCRescale::end_of_step()
     double *h = domain->h; // Voigt order: xx, yy, zz, yz, xz, xy
     double *h_inv = domain->h_inv;
     double deltah[6] = {0.0,0.0,0.0,0.0,0.0,0.0};
+
+    compute_sigma();
+    compute_deviatoric();
+    double *pdev_times_h;
+    matrix_prod(pdev,h,pdev_times_h);
+
     for (i = 0; i < 3; i++) {
       if (p_flag[i]) {
-        deltah[i] = - update->dt/(pdim*p_period[i]*bulkmodulus)* h[i] * (p_hydro-p_current[i]-ktv) +           
-             noise_prefactor/sqrt(p_period[i]) * h[i] * randoms[i];
+        deltah[i] = - update->dt/(pdim*p_period[i]*bulkmodulus) * (h[i]*(p_hydro-p_current[i]-ktv) +           
+           pdev_times_h[i]) + noise_prefactor/sqrt(p_period[i]) * h[i] * randoms[i];
       }
     }
     deltah[3] = - update->dt/(pdim*p_period[3]*bulkmodulus) * 
-         ((p_hydro-p_current[1]-ktv)*h[3] - p_current[3]*h[2]) +
-         noise_prefactor/sqrt(p_period[3]) * (randoms[1]*h[3] + randoms[3]*h[2]);
+       (((p_hydro-p_current[1]-ktv)*h[3] - p_current[3]*h[2]) + pdev_times_h[i])  +
+       noise_prefactor/sqrt(p_period[3]) * (randoms[1]*h[3] + randoms[3]*h[2]);
     deltah[4] = - update->dt/(pdim*p_period[4]*bulkmodulus) * 
-         ((p_hydro-p_current[0]-ktv)*h[4] - p_current[5]*h[3] - p_current[4]*h[2]) +
-         noise_prefactor/sqrt(p_period[4]) * (randoms[0]*h[4] + randoms[5]*h[3] + randoms[4]*h[2]);
+       (((p_hydro-p_current[0]-ktv)*h[4] - p_current[5]*h[3] - p_current[4]*h[2]) + pdev_times_h[i]) +
+       noise_prefactor/sqrt(p_period[4]) * (randoms[0]*h[4] + randoms[5]*h[3] + randoms[4]*h[2]);
     deltah[5] = - update->dt/(pdim*p_period[5]*bulkmodulus) * 
-         ((p_hydro-p_current[0]-ktv)*h[5] - p_current[5]*h[1]) +
-         noise_prefactor/sqrt(p_period[5]) * (randoms[0]*h[5] + randoms[5]*h[1]);
+       (((p_hydro-p_current[0]-ktv)*h[5] - p_current[5]*h[1]) + pdev_times_h[i]) +
+       noise_prefactor/sqrt(p_period[5]) * (randoms[0]*h[5] + randoms[5]*h[1]);
 
     matrix_prod(deltah,h_inv,dilation);
     
@@ -777,6 +789,119 @@ void FixPressCRescale::compute_temp_target()
 
 /* ---------------------------------------------------------------------- */
 
+void FixPressCRescale::compute_press_target()
+{
+  double delta = update->ntimestep - update->beginstep;
+  if (delta != 0.0) delta /= update->endstep - update->beginstep;
+
+  p_hydro = 0.0;
+  for (int i = 0; i < 3; i++)
+    if (p_flag[i]) {
+      p_target[i] = p_start[i] + delta * (p_stop[i]-p_start[i]);
+      p_hydro += p_target[i];
+    }
+  if (pdim > 0) p_hydro /= pdim;
+
+  if (pstyle == TRICLINIC)
+    for (int i = 3; i < 6; i++)
+      p_target[i] = p_start[i] + delta * (p_stop[i]-p_start[i]);
+}
+
+/* ----------------------------------------------------------------------
+   compute sigma tensor
+   needed whenever p_target or h0_inv changes
+-----------------------------------------------------------------------*/
+
+void FixPressCRescale::compute_sigma()
+{
+  // if nreset_h0 > 0, reset h0_inv
+  // every nreset_h0 timesteps
+
+  if (nreset_h0 > 0) {
+    int delta = update->ntimestep - update->beginstep;
+    if (delta % nreset_h0 == 0) {
+      h0_inv[0] = domain->h_inv[0];
+      h0_inv[1] = domain->h_inv[1];
+      h0_inv[2] = domain->h_inv[2];
+      h0_inv[3] = domain->h_inv[3];
+      h0_inv[4] = domain->h_inv[4];
+      h0_inv[5] = domain->h_inv[5];
+    }
+  }
+
+  // generate upper-triangular half of
+  // sigma = h0inv*(p_target-p_hydro)*h0inv^t
+  // units of sigma are are P/L^2
+  //
+  // [ 0 5 4 ]   [ 0 5 4 ] [ 0 5 4 ] [ 0 - - ]
+  // [ 5 1 3 ] = [ - 1 3 ] [ 5 1 3 ] [ 5 1 - ]
+  // [ 4 3 2 ]   [ - - 2 ] [ 4 3 2 ] [ 4 3 2 ]
+
+  sigma[0] =
+          h0_inv[0]*((p_target[0]-p_hydro)*h0_inv[0] +
+                     p_target[5]*h0_inv[5]+p_target[4]*h0_inv[4]) +
+          h0_inv[5]*(p_target[5]*h0_inv[0] +
+                     (p_target[1]-p_hydro)*h0_inv[5]+p_target[3]*h0_inv[4]) +
+          h0_inv[4]*(p_target[4]*h0_inv[0]+p_target[3]*h0_inv[5] +
+                     (p_target[2]-p_hydro)*h0_inv[4]);
+  sigma[1] =
+          h0_inv[1]*((p_target[1]-p_hydro)*h0_inv[1] +
+                     p_target[3]*h0_inv[3]) +
+          h0_inv[3]*(p_target[3]*h0_inv[1] +
+                     (p_target[2]-p_hydro)*h0_inv[3]);
+  sigma[2] =
+          h0_inv[2]*((p_target[2]-p_hydro)*h0_inv[2]);
+  sigma[3] =
+          h0_inv[1]*(p_target[3]*h0_inv[2]) +
+          h0_inv[3]*((p_target[2]-p_hydro)*h0_inv[2]);
+  sigma[4] =
+          h0_inv[0]*(p_target[4]*h0_inv[2]) +
+          h0_inv[5]*(p_target[3]*h0_inv[2]) +
+          h0_inv[4]*((p_target[2]-p_hydro)*h0_inv[2]);
+  sigma[5] =
+          h0_inv[0]*(p_target[5]*h0_inv[1]+p_target[4]*h0_inv[3]) +
+          h0_inv[5]*((p_target[1]-p_hydro)*h0_inv[1]+p_target[3]*h0_inv[3]) +
+          h0_inv[4]*(p_target[3]*h0_inv[1]+(p_target[2]-p_hydro)*h0_inv[3]);
+}
+
+/* ----------------------------------------------------------------------
+   compute deviatoric barostat pressure = h*sigma*h^t
+-----------------------------------------------------------------------*/
+
+void FixPressCRescale::compute_deviatoric()
+{
+  // generate upper-triangular part of h*sigma*h^t
+  // units of pdev are are pressure units, e.g. atm
+  // [ 0 5 4 ]   [ 0 5 4 ] [ 0 5 4 ] [ 0 - - ]
+  // [ 5 1 3 ] = [ - 1 3 ] [ 5 1 3 ] [ 5 1 - ]
+  // [ 4 3 2 ]   [ - - 2 ] [ 4 3 2 ] [ 4 3 2 ]
+
+  double* h = domain->h;
+
+  pdev[0] =
+    h[0]*(sigma[0]*h[0]+sigma[5]*h[5]+sigma[4]*h[4]) +
+    h[5]*(sigma[5]*h[0]+sigma[1]*h[5]+sigma[3]*h[4]) +
+    h[4]*(sigma[4]*h[0]+sigma[3]*h[5]+sigma[2]*h[4]);
+  pdev[1] =
+    h[1]*(              sigma[1]*h[1]+sigma[3]*h[3]) +
+    h[3]*(              sigma[3]*h[1]+sigma[2]*h[3]);
+  pdev[2] =
+    h[2]*(                            sigma[2]*h[2]);
+  pdev[3] =
+    h[1]*(                            sigma[3]*h[2]) +
+    h[3]*(                            sigma[2]*h[2]);
+  pdev[4] =
+    h[0]*(                            sigma[4]*h[2]) +
+    h[5]*(                            sigma[3]*h[2]) +
+    h[4]*(                            sigma[2]*h[2]);
+  pdev[5] =
+    h[0]*(              sigma[5]*h[1]+sigma[4]*h[3]) +
+    h[5]*(              sigma[1]*h[1]+sigma[3]*h[3]) +
+    h[4]*(              sigma[3]*h[1]+sigma[2]*h[3]);
+}
+
+/* ---------------------------------------------------------------------- */
+
 void FixPressCRescale::matrix_prod(double *in1, double *in2, double *out) 
 {
   // compute matrix product in1 * in2 (in1, in2 and output represented in Voigt order)
@@ -812,22 +937,4 @@ void FixPressCRescale::inverse_matrix(double *in, double *out)
   out[3] = -in[3] / (in[1]*in[2]);
   out[4] = (in[3]*in[5] - in[1]*in[4]) / (in[0]*in[1]*in[2]);
   out[5] = -in[5] / (in[0]*in[1]);
-}
-
-void FixPressCRescale::compute_press_target()
-{
-  double delta = update->ntimestep - update->beginstep;
-  if (delta != 0.0) delta /= update->endstep - update->beginstep;
-
-  p_hydro = 0.0;
-  for (int i = 0; i < 3; i++)
-    if (p_flag[i]) {
-      p_target[i] = p_start[i] + delta * (p_stop[i]-p_start[i]);
-      p_hydro += p_target[i];
-    }
-  if (pdim > 0) p_hydro /= pdim;
-
-  if (pstyle == TRICLINIC)
-    for (int i = 3; i < 6; i++)
-      p_target[i] = p_start[i] + delta * (p_stop[i]-p_start[i]);
 }
