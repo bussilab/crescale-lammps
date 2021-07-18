@@ -155,7 +155,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
       if (iarg+4 > narg) error->all(FLERR,"Illegal fix press/crescale command");
       p_start[3] = utils::numeric(FLERR,arg[iarg+1],false,lmp);
       p_stop[3] = utils::numeric(FLERR,arg[iarg+2],false,lmp);
-      p_period[3] = utils::numeric(FLERR,arg[iarg+3],false,lmp);
+      p_period[3] = p_period_global = utils::numeric(FLERR,arg[iarg+3],false,lmp);
       p_flag[3] = 1;
       iarg += 4;
       if (dimension == 2)
@@ -164,7 +164,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
       if (iarg+4 > narg) error->all(FLERR,"Illegal press/crescale command");
       p_start[4] = utils::numeric(FLERR,arg[iarg+1],false,lmp);
       p_stop[4] = utils::numeric(FLERR,arg[iarg+2],false,lmp);
-      p_period[4] = utils::numeric(FLERR,arg[iarg+3],false,lmp);
+      p_period[4] = p_period_global = utils::numeric(FLERR,arg[iarg+3],false,lmp);
       p_flag[4] = 1;
       iarg += 4;
       if (dimension == 2)
@@ -173,7 +173,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
       if (iarg+4 > narg) error->all(FLERR,"Illegal fix press/crescale command");
       p_start[5] = utils::numeric(FLERR,arg[iarg+1],false,lmp);
       p_stop[5] = utils::numeric(FLERR,arg[iarg+2],false,lmp);
-      p_period[5] = utils::numeric(FLERR,arg[iarg+3],false,lmp);
+      p_period[5] = p_period_global = utils::numeric(FLERR,arg[iarg+3],false,lmp);
       p_flag[5] = 1;
       iarg += 4;
 
@@ -328,6 +328,14 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
   else if (pcouple == XYZ || (dimension == 2 && pcouple == XY)) pstyle = ISO;
   else pstyle = ANISO;  
 
+  // require single relaxation parameter if pstyle = TRICLINIC
+
+  if (pstyle == TRICLINIC)
+    for (int i = 0; i < 6; i++)
+      if (p_flag[i] && p_period[i] != p_period_global)
+        error->all(FLERR,"Cannot use fix press/crescale with different "
+                   "pressure damping parameters if box is triclinic"); 
+
   // create a new compute temp style
   // id = fix-ID + temp
   // compute group = all since pressure is always global (group all)
@@ -470,23 +478,29 @@ void FixPressCRescale::end_of_step()
   if (dimension == 3) volume = domain->xprd * domain->yprd * domain->zprd;
   else volume = domain->xprd * domain->yprd;  
   double ktv = force->boltz * t_target / volume * force->nktv2p;
-  double noise_prefactor = sqrt(2.0*ktv*update->dt/(pdim*bulkmodulus));
 
   compute_press_target();
   compute_sigma();
   compute_deviatoric();
 
   if (pstyle != TRICLINIC) {
+    noise_prefactor = sqrt(2.0*ktv*update->dt/(pdim*bulkmodulus));
+    determ_prefactor = update->dt/(pdim*bulkmodulus);
     for (i = 0; i < 3; i++) {
       if (p_flag[i]) {
         dilation[i] = 
-             1.0 - update->dt/(pdim*p_period[i]*bulkmodulus) * (p_hydro-p_current[i]-ktv+pdev[i]) + 
+             1.0 - determ_prefactor/p_period[i] * (p_hydro-p_current[i]-ktv+pdev[i]) + 
              noise_prefactor/sqrt(p_period[i]) * randoms[i];
       }
       else
         dilation[i] = 1.0;
     }
+
+  // triclinic box
+
   } else {
+    noise_prefactor = sqrt(2.0*ktv*update->dt/(pdim*bulkmodulus*p_period_global));
+    determ_prefactor = update->dt/(pdim*bulkmodulus*p_period_global);
     double *h = domain->h; // Voigt order: xx, yy, zz, yz, xz, xy
     double *h_inv = domain->h_inv;
     double deltah[6] = {0.0,0.0,0.0,0.0,0.0,0.0};
@@ -495,20 +509,18 @@ void FixPressCRescale::end_of_step()
     matrix_prod(pdev,h,pdev_times_h);
 
     for (i = 0; i < 3; i++) {
-      if (p_flag[i]) {
-        deltah[i] = - update->dt/(pdim*p_period[i]*bulkmodulus) * (h[i]*(p_hydro-p_current[i]-ktv) +           
-           pdev_times_h[i]) + noise_prefactor/sqrt(p_period[i]) * h[i] * randoms[i];
-      }
+      deltah[i] = - determ_prefactor * (h[i]*(p_hydro-p_current[i]-ktv) + pdev_times_h[i]) + 
+                    noise_prefactor * h[i] * randoms[i];
     }
-    deltah[3] = - update->dt/(pdim*p_period[3]*bulkmodulus) * 
-       (((p_hydro-p_current[1]-ktv)*h[3] - p_current[3]*h[2]) + pdev_times_h[3])  +
-       noise_prefactor/sqrt(p_period[3]) * (randoms[1]*h[3] + randoms[3]*h[2]);
-    deltah[4] = - update->dt/(pdim*p_period[4]*bulkmodulus) * 
+    deltah[3] = - determ_prefactor * 
+       (((p_hydro-p_current[1]-ktv)*h[3] - p_current[3]*h[2]) + pdev_times_h[3]) +
+       noise_prefactor * (randoms[1]*h[3] + randoms[3]*h[2]);
+    deltah[4] = - determ_prefactor * 
        (((p_hydro-p_current[0]-ktv)*h[4] - p_current[5]*h[3] - p_current[4]*h[2]) + pdev_times_h[4]) +
-       noise_prefactor/sqrt(p_period[4]) * (randoms[0]*h[4] + randoms[5]*h[3] + randoms[4]*h[2]);
-    deltah[5] = - update->dt/(pdim*p_period[5]*bulkmodulus) * 
+       noise_prefactor * (randoms[0]*h[4] + randoms[5]*h[3] + randoms[4]*h[2]);
+    deltah[5] = - determ_prefactor * 
        (((p_hydro-p_current[0]-ktv)*h[5] - p_current[5]*h[1]) + pdev_times_h[5]) +
-       noise_prefactor/sqrt(p_period[5]) * (randoms[0]*h[5] + randoms[5]*h[1]);
+       noise_prefactor * (randoms[0]*h[5] + randoms[5]*h[1]);
 
     matrix_prod(deltah,h_inv,dilation);
     
@@ -538,8 +550,7 @@ void FixPressCRescale::couple()
   double *tensor = pressure->vector;
 
   for(int i = 0; i < 6;i++) 
-    if (p_flag[i]) 
-      randoms[i] = random->gaussian(); 
+    randoms[i] = random->gaussian(); 
 
   if (pstyle == ISO) {
     p_current[0] = p_current[1] = p_current[2] = pressure->scalar;

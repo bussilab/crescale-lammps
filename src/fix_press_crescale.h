@@ -38,6 +38,7 @@ class FixPressCRescale : public Fix {
   int dimension,which;
   double bulkmodulus;
   double kt;
+  double noise_prefactor, determ_prefactor;
 
   double t_start,t_stop;
   double t_target;
@@ -46,6 +47,7 @@ class FixPressCRescale : public Fix {
   int p_flag[6];                   // 1 if control P on this dim, 0 if not
   double p_start[6],p_stop[6];
   double p_period[6],p_target[6];
+  double p_period_global;
   double p_current[6],dilation[6];
   double randoms[6];
   int kspace_flag;                 // 1 if KSpace invoked, 0 if not
@@ -156,5 +158,9 @@ E: Cannot use fix press/crescale without temp specification
     fix press/berendsen ... temp tstart tstop
 where tstart and tstop are the starting and final temperatures of 
 the thermostat coupled with CRescale
+
+E: Cannot use fix press/crescale with different pressure damping parameters if box is triclinic
+
+Self-explanatory.
 
 */
