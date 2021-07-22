@@ -27,7 +27,7 @@ Syntax
            template-ID = ID of molecule template specified in a separate :doc:`molecule <molecule>` command
          *hybrid* args = list of one or more sub-styles, each with their args
 
-* accelerated styles (with same args) = *angle/kk* or *atomic/kk* or *bond/kk* or *charge/kk* or *full/kk* or *molecular/kk*
+* accelerated styles (with same args) = *angle/kk* or *atomic/kk* or *bond/kk* or *charge/kk* or *full/kk* or *molecular/kk* or *spin/kk*
 
 Examples
 """"""""
@@ -87,6 +87,8 @@ quantities.
 | *bond*       | bonds                                               | bead-spring polymers                 |
 +--------------+-----------------------------------------------------+--------------------------------------+
 | *charge*     | charge                                              | atomic system with charges           |
++--------------+-----------------------------------------------------+--------------------------------------+
+| *dielectric* | dipole, area, curvature                             | system with surface polarization     |
 +--------------+-----------------------------------------------------+--------------------------------------+
 | *dipole*     | charge and dipole moment                            | system with dipolar particles        |
 +--------------+-----------------------------------------------------+--------------------------------------+
@@ -166,6 +168,17 @@ a point particle.  If it is an ellipsoid, it also stores a shape
 vector with the 3 diameters of the ellipsoid and a quaternion 4-vector
 with its orientation.
 
+For the *dielectric* style, each particle can be either a physical
+particle (e.g. an ion), or an interface particle representing a boundary
+element. For physical particles, the per-particle properties are
+the same as atom_style full.  For interface particles, in addition to
+these properties, each particle also has an area, a normal unit vector,
+a mean local curvature, the mean and difference of the dielectric constants
+of two sides of the interface, and the local dielectric constant at the
+boundary element.  The distinction between the physical and interface
+particles is only meaningful when :doc:`fix polarize <fix_polarize>`
+commands are applied to the interface particles.
+
 For the *dipole* style, a point dipole is defined for each point
 particle.  Note that if you wish the particles to be finite-size
 spheres as in a Stockmayer potential for a dipolar fluid, so that the
@@ -181,7 +194,7 @@ For the *peri* style, the particles are spherical and each stores a
 per-particle mass and volume.
 
 The *dpd* style is for dissipative particle dynamics (DPD) particles.
-Note that it is part of the USER-DPD package, and is not for use with
+Note that it is part of the DPD-REACT package, and is not for use with
 the :doc:`pair_style dpd or dpd/stat <pair_dpd>` commands, which can
 simply use atom_style atomic.  Atom_style dpd extends DPD particle
 properties with internal temperature (dpdTheta), internal conductive
@@ -306,7 +319,7 @@ styles take the same arguments and should produce the same results,
 except for round-off and precision issues.
 
 Note that other acceleration packages in LAMMPS, specifically the GPU,
-USER-INTEL, USER-OMP, and OPT packages do not use accelerated atom
+INTEL, OPENMP, and OPT packages do not use accelerated atom
 styles.
 
 The accelerated styles are part of the KOKKOS package.  They are only
@@ -339,24 +352,24 @@ The *dipole* style is part of the DIPOLE package.
 
 The *peri* style is part of the PERI package for Peridynamics.
 
-The *electron* style is part of the USER-EFF package for :doc:`electronic force fields <pair_eff>`.
+The *electron* style is part of the EFF package for :doc:`electronic force fields <pair_eff>`.
 
-The *dpd* style is part of the USER-DPD package for dissipative
+The *dpd* style is part of the DPD-REACT package for dissipative
 particle dynamics (DPD).
 
-The *edpd*\ , *mdpd*\ , and *tdpd* styles are part of the USER-MESODPD package
+The *edpd*\ , *mdpd*\ , and *tdpd* styles are part of the DPD-MESO package
 for energy-conserving dissipative particle dynamics (eDPD), many-body
 dissipative particle dynamics (mDPD), and transport dissipative particle
 dynamics (tDPD), respectively.
 
-The *sph* style is part of the USER-SPH package for smoothed particle
+The *sph* style is part of the SPH package for smoothed particle
 hydrodynamics (SPH).  See `this PDF guide <USER/sph/SPH_LAMMPS_userguide.pdf>`_ to using SPH in LAMMPS.
 
-The *mesont* style is part of the USER-MESONT package.
+The *mesont* style is part of the MESONT package.
 
 The *spin* style is part of the SPIN package.
 
-The *wavepacket* style is part of the USER-AWPMD package for the
+The *wavepacket* style is part of the AWPMD package for the
 :doc:`antisymmetrized wave packet MD method <pair_awpmd>`.
 
 Related commands
