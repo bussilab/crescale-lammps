@@ -111,7 +111,8 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
       p_start[3] = p_start[4] = p_start[5] = 0.0;
       p_stop[3] = p_stop[4] = p_stop[5] = 0.0;
       p_period[0] = p_period[1] = p_period[2] 
-        = p_period[3] = p_period[4] = p_period[5] = utils::numeric(FLERR,arg[iarg+3],false,lmp);
+        = p_period[3] = p_period[4] = p_period[5] 
+        = p_period_global = utils::numeric(FLERR,arg[iarg+3],false,lmp);
       p_flag[0] = p_flag[1] = p_flag[2]  
         = p_flag[3] = p_flag[4] = p_flag[5] = 1;
       if (dimension == 2) {
