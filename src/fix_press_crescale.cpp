@@ -364,6 +364,10 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
 
   nrigid = 0;
   rfix = nullptr;
+
+  // initialize vol0 to zero to signal uninitialized
+  // values then assigned in init(), if necessary
+  vol0 = 0.0;
 }
 
 /* ---------------------------------------------------------------------- */
@@ -421,7 +425,21 @@ void FixPressCRescale::init()
     error->all(FLERR,"Pressure ID for fix press/crescale does not exist");
   pressure = modify->compute[icompute];
 
+
+  // tally the number of dimensions that are barostatted
+  // set initial volume and reference cell, if not already done
+
   pdim = p_flag[0] + p_flag[1] + p_flag[2];
+  if (vol0 == 0.0) {
+    if (dimension == 3) vol0 = domain->xprd * domain->yprd * domain->zprd;
+    else vol0 = domain->xprd * domain->yprd;
+    h0_inv[0] = domain->h_inv[0];
+    h0_inv[1] = domain->h_inv[1];
+    h0_inv[2] = domain->h_inv[2];
+    h0_inv[3] = domain->h_inv[3];
+    h0_inv[4] = domain->h_inv[4];
+    h0_inv[5] = domain->h_inv[5];
+  }
 
   // Kspace setting
 
@@ -490,8 +508,8 @@ void FixPressCRescale::end_of_step()
     for (i = 0; i < 3; i++) {
       if (p_flag[i]) {
         dilation[i] = 
-             1.0 - determ_prefactor/p_period[i] * (p_hydro-p_current[i]-ktv+pdev[i]) + 
-             noise_prefactor/sqrt(p_period[i]) * randoms[i];
+            1.0 - determ_prefactor/p_period[i] * (p_hydro-p_current[i]-ktv + pdev[i]/volume)
+                + noise_prefactor/sqrt(p_period[i]) * randoms[i];
       }
       else
         dilation[i] = 1.0;
@@ -510,18 +528,19 @@ void FixPressCRescale::end_of_step()
     matrix_prod(pdev,h,pdev_times_h);
 
     for (i = 0; i < 3; i++) {
-      deltah[i] = - determ_prefactor * (h[i]*(p_hydro-p_current[i]-ktv) + pdev_times_h[i]) + 
-                    noise_prefactor * h[i] * randoms[i];
+      deltah[i] = 
+          - determ_prefactor * (h[i]*(p_hydro-p_current[i]-ktv) + pdev_times_h[i]/volume) 
+          + noise_prefactor * h[i] * randoms[i];
     }
     deltah[3] = - determ_prefactor * 
-       (((p_hydro-p_current[1]-ktv)*h[3] - p_current[3]*h[2]) + pdev_times_h[3]) +
-       noise_prefactor * (randoms[1]*h[3] + randoms[3]*h[2]);
+       (((p_hydro-p_current[1]-ktv)*h[3] - p_current[3]*h[2]) + pdev_times_h[3]/volume)
+       + noise_prefactor * (randoms[1]*h[3] + randoms[3]*h[2]);
     deltah[4] = - determ_prefactor * 
-       (((p_hydro-p_current[0]-ktv)*h[4] - p_current[5]*h[3] - p_current[4]*h[2]) + pdev_times_h[4]) +
-       noise_prefactor * (randoms[0]*h[4] + randoms[5]*h[3] + randoms[4]*h[2]);
+       (((p_hydro-p_current[0]-ktv)*h[4] - p_current[5]*h[3] - p_current[4]*h[2]) + pdev_times_h[4]/volume)
+       + noise_prefactor * (randoms[0]*h[4] + randoms[5]*h[3] + randoms[4]*h[2]);
     deltah[5] = - determ_prefactor * 
-       (((p_hydro-p_current[0]-ktv)*h[5] - p_current[5]*h[1]) + pdev_times_h[5]) +
-       noise_prefactor * (randoms[0]*h[5] + randoms[5]*h[1]);
+       (((p_hydro-p_current[0]-ktv)*h[5] - p_current[5]*h[1]) + pdev_times_h[5]/volume)
+       + noise_prefactor * (randoms[0]*h[5] + randoms[5]*h[1]);
 
     matrix_prod(deltah,h_inv,dilation);
     
@@ -828,12 +847,14 @@ void FixPressCRescale::compute_press_target()
 
 void FixPressCRescale::compute_sigma()
 {
-  // if nreset_h0 > 0, reset h0_inv
+  // if nreset_h0 > 0, reset vol0 and h0_inv
   // every nreset_h0 timesteps
 
   if (nreset_h0 > 0) {
     int delta = update->ntimestep - update->beginstep;
     if (delta % nreset_h0 == 0) {
+      if (dimension == 3) vol0 = domain->xprd * domain->yprd * domain->zprd;
+      else vol0 = domain->xprd * domain->yprd;
       h0_inv[0] = domain->h_inv[0];
       h0_inv[1] = domain->h_inv[1];
       h0_inv[2] = domain->h_inv[2];
@@ -852,30 +873,30 @@ void FixPressCRescale::compute_sigma()
   // [ 4 3 2 ]   [ - - 2 ] [ 4 3 2 ] [ 4 3 2 ]
 
   sigma[0] =
-          h0_inv[0]*((p_target[0]-p_hydro)*h0_inv[0] +
+    vol0*(h0_inv[0]*((p_target[0]-p_hydro)*h0_inv[0] +
                      p_target[5]*h0_inv[5]+p_target[4]*h0_inv[4]) +
           h0_inv[5]*(p_target[5]*h0_inv[0] +
                      (p_target[1]-p_hydro)*h0_inv[5]+p_target[3]*h0_inv[4]) +
           h0_inv[4]*(p_target[4]*h0_inv[0]+p_target[3]*h0_inv[5] +
-                     (p_target[2]-p_hydro)*h0_inv[4]);
+                     (p_target[2]-p_hydro)*h0_inv[4]));
   sigma[1] =
-          h0_inv[1]*((p_target[1]-p_hydro)*h0_inv[1] +
+    vol0*(h0_inv[1]*((p_target[1]-p_hydro)*h0_inv[1] +
                      p_target[3]*h0_inv[3]) +
           h0_inv[3]*(p_target[3]*h0_inv[1] +
-                     (p_target[2]-p_hydro)*h0_inv[3]);
+                     (p_target[2]-p_hydro)*h0_inv[3]));
   sigma[2] =
-          h0_inv[2]*((p_target[2]-p_hydro)*h0_inv[2]);
+    vol0*(h0_inv[2]*((p_target[2]-p_hydro)*h0_inv[2]));
   sigma[3] =
-          h0_inv[1]*(p_target[3]*h0_inv[2]) +
-          h0_inv[3]*((p_target[2]-p_hydro)*h0_inv[2]);
+    vol0*(h0_inv[1]*(p_target[3]*h0_inv[2]) +
+          h0_inv[3]*((p_target[2]-p_hydro)*h0_inv[2]));
   sigma[4] =
-          h0_inv[0]*(p_target[4]*h0_inv[2]) +
+    vol0*(h0_inv[0]*(p_target[4]*h0_inv[2]) +
           h0_inv[5]*(p_target[3]*h0_inv[2]) +
-          h0_inv[4]*((p_target[2]-p_hydro)*h0_inv[2]);
+          h0_inv[4]*((p_target[2]-p_hydro)*h0_inv[2]));
   sigma[5] =
-          h0_inv[0]*(p_target[5]*h0_inv[1]+p_target[4]*h0_inv[3]) +
+    vol0*(h0_inv[0]*(p_target[5]*h0_inv[1]+p_target[4]*h0_inv[3]) +
           h0_inv[5]*((p_target[1]-p_hydro)*h0_inv[1]+p_target[3]*h0_inv[3]) +
-          h0_inv[4]*(p_target[3]*h0_inv[1]+(p_target[2]-p_hydro)*h0_inv[3]);
+          h0_inv[4]*(p_target[3]*h0_inv[1]+(p_target[2]-p_hydro)*h0_inv[3]));
 }
 
 /* ----------------------------------------------------------------------

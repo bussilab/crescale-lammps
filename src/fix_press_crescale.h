@@ -39,6 +39,7 @@ class FixPressCRescale : public Fix {
   double bulkmodulus;
   double kt;
   double noise_prefactor, determ_prefactor;
+  double vol0;                     // reference volume
 
   double t_start,t_stop;
   double t_target;
