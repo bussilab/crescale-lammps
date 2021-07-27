@@ -63,7 +63,7 @@ class FixPressCRescale : public Fix {
   int pdim;                        // number of barostatted dims
 
   double sigma[6];                 // scaled target stress
-  double pdev[6];                  // deviatoric force on barostat
+  double fdev[6];                  // deviatoric force on barostat
   double h0_inv[6];                // h_inv of reference (zero strain) box
   int nreset_h0;                   // interval for resetting h0
 

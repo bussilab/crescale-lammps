@@ -508,7 +508,7 @@ void FixPressCRescale::end_of_step()
     for (i = 0; i < 3; i++) {
       if (p_flag[i]) {
         dilation[i] = 
-            1.0 - determ_prefactor/p_period[i] * (p_hydro-p_current[i]-ktv + pdev[i]/volume)
+            1.0 - determ_prefactor/p_period[i] * (p_hydro-p_current[i]-ktv + fdev[i]/volume)
                 + noise_prefactor/sqrt(p_period[i]) * randoms[i];
       }
       else
@@ -524,22 +524,22 @@ void FixPressCRescale::end_of_step()
     double *h_inv = domain->h_inv;
     double deltah[6] = {0.0,0.0,0.0,0.0,0.0,0.0};
 
-    double pdev_times_h[6];
-    matrix_prod(pdev,h,pdev_times_h);
+    double fdev_times_h[6];
+    matrix_prod(fdev,h,fdev_times_h);
 
     for (i = 0; i < 3; i++) {
       deltah[i] = 
-          - determ_prefactor * (h[i]*(p_hydro-p_current[i]-ktv) + pdev_times_h[i]/volume) 
+          - determ_prefactor * (h[i]*(p_hydro-p_current[i]-ktv) + fdev_times_h[i]/volume) 
           + noise_prefactor * h[i] * randoms[i];
     }
     deltah[3] = - determ_prefactor * 
-       (((p_hydro-p_current[1]-ktv)*h[3] - p_current[3]*h[2]) + pdev_times_h[3]/volume)
+       (((p_hydro-p_current[1]-ktv)*h[3] - p_current[3]*h[2]) + fdev_times_h[3]/volume)
        + noise_prefactor * (randoms[1]*h[3] + randoms[3]*h[2]);
     deltah[4] = - determ_prefactor * 
-       (((p_hydro-p_current[0]-ktv)*h[4] - p_current[5]*h[3] - p_current[4]*h[2]) + pdev_times_h[4]/volume)
+       (((p_hydro-p_current[0]-ktv)*h[4] - p_current[5]*h[3] - p_current[4]*h[2]) + fdev_times_h[4]/volume)
        + noise_prefactor * (randoms[0]*h[4] + randoms[5]*h[3] + randoms[4]*h[2]);
     deltah[5] = - determ_prefactor * 
-       (((p_hydro-p_current[0]-ktv)*h[5] - p_current[5]*h[1]) + pdev_times_h[5]/volume)
+       (((p_hydro-p_current[0]-ktv)*h[5] - p_current[5]*h[1]) + fdev_times_h[5]/volume)
        + noise_prefactor * (randoms[0]*h[5] + randoms[5]*h[1]);
 
     matrix_prod(deltah,h_inv,dilation);
@@ -866,7 +866,7 @@ void FixPressCRescale::compute_sigma()
 
   // generate upper-triangular half of
   // sigma = h0inv*(p_target-p_hydro)*h0inv^t
-  // units of sigma are are P/L^2
+  // units of sigma are are PV/L^2 e.g. atm.A
   //
   // [ 0 5 4 ]   [ 0 5 4 ] [ 0 5 4 ] [ 0 - - ]
   // [ 5 1 3 ] = [ - 1 3 ] [ 5 1 3 ] [ 5 1 - ]
@@ -906,30 +906,30 @@ void FixPressCRescale::compute_sigma()
 void FixPressCRescale::compute_deviatoric()
 {
   // generate upper-triangular part of h*sigma*h^t
-  // units of pdev are are pressure units, e.g. atm
+  // units of fdev are are PV, e.g. atm*A^3
   // [ 0 5 4 ]   [ 0 5 4 ] [ 0 5 4 ] [ 0 - - ]
   // [ 5 1 3 ] = [ - 1 3 ] [ 5 1 3 ] [ 5 1 - ]
   // [ 4 3 2 ]   [ - - 2 ] [ 4 3 2 ] [ 4 3 2 ]
 
   double* h = domain->h;
 
-  pdev[0] =
+  fdev[0] =
     h[0]*(sigma[0]*h[0]+sigma[5]*h[5]+sigma[4]*h[4]) +
     h[5]*(sigma[5]*h[0]+sigma[1]*h[5]+sigma[3]*h[4]) +
     h[4]*(sigma[4]*h[0]+sigma[3]*h[5]+sigma[2]*h[4]);
-  pdev[1] =
+  fdev[1] =
     h[1]*(              sigma[1]*h[1]+sigma[3]*h[3]) +
     h[3]*(              sigma[3]*h[1]+sigma[2]*h[3]);
-  pdev[2] =
+  fdev[2] =
     h[2]*(                            sigma[2]*h[2]);
-  pdev[3] =
+  fdev[3] =
     h[1]*(                            sigma[3]*h[2]) +
     h[3]*(                            sigma[2]*h[2]);
-  pdev[4] =
+  fdev[4] =
     h[0]*(                            sigma[4]*h[2]) +
     h[5]*(                            sigma[3]*h[2]) +
     h[4]*(                            sigma[2]*h[2]);
-  pdev[5] =
+  fdev[5] =
     h[0]*(              sigma[5]*h[1]+sigma[4]*h[3]) +
     h[5]*(              sigma[1]*h[1]+sigma[3]*h[3]) +
     h[4]*(              sigma[3]*h[1]+sigma[2]*h[3]);
