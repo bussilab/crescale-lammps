@@ -53,6 +53,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
   pcouple = NONE;
   bulkmodulus = 10.0;
   allremap = 1;
+  deviatoric_flag = 0;
   nreset_h0 = 0;
 
   for (int i = 0; i < 6; i++) {
@@ -132,6 +133,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
       p_stop[0] = utils::numeric(FLERR,arg[iarg+2],false,lmp);
       p_period[0] = utils::numeric(FLERR,arg[iarg+3],false,lmp);
       p_flag[0] = 1;
+      deviatoric_flag = 1;
       iarg += 4;
     } else if (strcmp(arg[iarg],"y") == 0) {
       if (iarg+4 > narg)
@@ -140,6 +142,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
       p_stop[1] = utils::numeric(FLERR,arg[iarg+2],false,lmp);
       p_period[1] = utils::numeric(FLERR,arg[iarg+3],false,lmp);
       p_flag[1] = 1;
+      deviatoric_flag = 1;
       iarg += 4;
     } else if (strcmp(arg[iarg],"z") == 0) {
       if (iarg+4 > narg)
@@ -148,6 +151,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
       p_stop[2] = utils::numeric(FLERR,arg[iarg+2],false,lmp);
       p_period[2] = utils::numeric(FLERR,arg[iarg+3],false,lmp);
       p_flag[2] = 1;
+      deviatoric_flag = 1;
       iarg += 4;
       if (dimension == 2)
         error->all(FLERR,"Invalid fix press/crescale for a 2d simulation");
@@ -158,6 +162,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
       p_stop[3] = utils::numeric(FLERR,arg[iarg+2],false,lmp);
       p_period[3] = p_period_global = utils::numeric(FLERR,arg[iarg+3],false,lmp);
       p_flag[3] = 1;
+      deviatoric_flag = 1;
       iarg += 4;
       if (dimension == 2)
         error->all(FLERR,"Invalid fix press/crescale command for a 2d simulation");
@@ -167,6 +172,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
       p_stop[4] = utils::numeric(FLERR,arg[iarg+2],false,lmp);
       p_period[4] = p_period_global = utils::numeric(FLERR,arg[iarg+3],false,lmp);
       p_flag[4] = 1;
+      deviatoric_flag = 1;
       iarg += 4;
       if (dimension == 2)
         error->all(FLERR,"Invalid fix press/crescale command for a 2d simulation");
@@ -176,6 +182,7 @@ FixPressCRescale::FixPressCRescale(LAMMPS *lmp, int narg, char **arg) :
       p_stop[5] = utils::numeric(FLERR,arg[iarg+2],false,lmp);
       p_period[5] = p_period_global = utils::numeric(FLERR,arg[iarg+3],false,lmp);
       p_flag[5] = 1;
+      deviatoric_flag = 1;
       iarg += 4;
 
     } else if (strcmp(arg[iarg],"couple") == 0) {
@@ -492,27 +499,30 @@ void FixPressCRescale::end_of_step()
   
   couple();
 
-  int i;
+  int i,j;
   double volume;
   if (dimension == 3) volume = domain->xprd * domain->yprd * domain->zprd;
   else volume = domain->xprd * domain->yprd;  
-  double ktv = force->boltz * t_target / volume * force->nktv2p;
+  ktv = force->boltz * t_target / volume * force->nktv2p;
 
   compute_press_target();
-  compute_sigma();
-  compute_deviatoric();
+  if (deviatoric_flag) {
+    compute_sigma();
+    compute_deviatoric();
+  }
 
   if (pstyle != TRICLINIC) {
     noise_prefactor = sqrt(2.0*ktv*update->dt/(pdim*bulkmodulus));
     determ_prefactor = update->dt/(pdim*bulkmodulus);
     for (i = 0; i < 3; i++) {
+      dilation[i] = 1.0;
       if (p_flag[i]) {
-        dilation[i] = 
-            1.0 - determ_prefactor/p_period[i] * (p_hydro-p_current[i]-ktv + fdev[i]/volume)
-                + noise_prefactor/sqrt(p_period[i]) * randoms[i];
+        dilation[i] += 
+            - determ_prefactor/p_period[i] * (p_hydro-p_current[i]-ktv)
+            + noise_prefactor/sqrt(p_period[i]) * randoms[i][i];
+        if (deviatoric_flag) 
+          dilation[i] -= determ_prefactor/(p_period[i]*volume) * fdev[i];
       }
-      else
-        dilation[i] = 1.0;
     }
 
   // triclinic box
@@ -520,34 +530,31 @@ void FixPressCRescale::end_of_step()
   } else {
     noise_prefactor = sqrt(2.0*ktv*update->dt/(pdim*bulkmodulus*p_period_global));
     determ_prefactor = update->dt/(pdim*bulkmodulus*p_period_global);
-    double *h = domain->h; // Voigt order: xx, yy, zz, yz, xz, xy
-    double *h_inv = domain->h_inv;
-    double deltah[6] = {0.0,0.0,0.0,0.0,0.0,0.0};
+    voigt2fullmatrix(domain->h,h_full,false); 
+    voigt2fullmatrix(domain->h_inv,h_inv_full,false);
+    voigt2fullmatrix(p_current,p_current_full,true);
+    matrix_prod(p_current_full,h_full,p_times_h);
+    matrix_prod(randoms,h_full,randoms_times_h);
 
-    double fdev_times_h[6];
-    matrix_prod(fdev,h,fdev_times_h);
-
-    for (i = 0; i < 3; i++) {
-      deltah[i] = 
-          - determ_prefactor * (h[i]*(p_hydro-p_current[i]-ktv) + fdev_times_h[i]/volume) 
-          + noise_prefactor * h[i] * randoms[i];
+    if (deviatoric_flag) {
+      voigt2fullmatrix(fdev,fdev_full,true);
+      matrix_prod(fdev_full,h_full,fdev_times_h);
     }
-    deltah[3] = - determ_prefactor * 
-       (((p_hydro-p_current[1]-ktv)*h[3] - p_current[3]*h[2]) + fdev_times_h[3]/volume)
-       + noise_prefactor * (randoms[1]*h[3] + randoms[3]*h[2]);
-    deltah[4] = - determ_prefactor * 
-       (((p_hydro-p_current[0]-ktv)*h[4] - p_current[5]*h[3] - p_current[4]*h[2]) + fdev_times_h[4]/volume)
-       + noise_prefactor * (randoms[0]*h[4] + randoms[5]*h[3] + randoms[4]*h[2]);
-    deltah[5] = - determ_prefactor * 
-       (((p_hydro-p_current[0]-ktv)*h[5] - p_current[5]*h[1]) + fdev_times_h[5]/volume)
-       + noise_prefactor * (randoms[0]*h[5] + randoms[5]*h[1]);
 
-    matrix_prod(deltah,h_inv,dilation);
-    
-    for (i = 0; i < 3; i++) {
-      dilation[i] += 1.0;
+    for (i = 0; i < 3; i++) { 
+      for (j = 0; j < 3; j++) {
+        hnew_full[i][j] = h_full[i][j] 
+          - determ_prefactor * ((p_hydro-ktv)*h_full[i][j] - p_times_h[i][j])
+          + noise_prefactor * randoms_times_h[i][j];
+        if (deviatoric_flag)
+          hnew_full[i][j] -= determ_prefactor/volume * fdev_times_h[i][j];
+      }
     }
-  } 
+
+    double dilation_with_rotations[3][3];
+    matrix_prod(hnew_full,h_inv_full,dilation_with_rotations);
+    backrotate(dilation_with_rotations,dilation);
+  }
  
   MPI_Bcast(&dilation[0],6,MPI_DOUBLE,0,world);
 
@@ -569,36 +576,37 @@ void FixPressCRescale::couple()
 {
   double *tensor = pressure->vector;
 
-  for(int i = 0; i < 6;i++) 
-    randoms[i] = random->gaussian(); 
+  for(int i = 0; i < 3; i++) 
+    for(int j = 0; j < 3; j++)
+      randoms[i][j] = random->gaussian(); 
 
   if (pstyle == ISO) {
     p_current[0] = p_current[1] = p_current[2] = pressure->scalar;
-    double ave_rand = 1.0/3.0 * (randoms[0] + randoms[1] + randoms[2]);
-    randoms[0] = randoms[1] = randoms[2] = ave_rand;
+    double ave_rand = 1.0/3.0 * (randoms[0][0] + randoms[1][1] + randoms[2][2]);
+    randoms[0][0] = randoms[1][1] = randoms[2][2] = ave_rand;
   } else if (pcouple == XYZ) {
     double ave = 1.0/3.0 * (tensor[0] + tensor[1] + tensor[2]);
     p_current[0] = p_current[1] = p_current[2] = ave;
-    double ave_rand = 1.0/3.0 * (randoms[0] + randoms[1] + randoms[2]);
-    randoms[0] = randoms[1] = randoms[2] = ave_rand;
+    double ave_rand = 1.0/3.0 * (randoms[0][0] + randoms[1][1] + randoms[2][2]);
+    randoms[0][0] = randoms[1][1] = randoms[2][2] = ave_rand;
   } else if (pcouple == XY) {
     double ave = 0.5 * (tensor[0] + tensor[1]);
     p_current[0] = p_current[1] = ave;
     p_current[2] = tensor[2];
-    double ave_rand = 0.5 * (randoms[0] + randoms[1]);
-    randoms[0] = randoms[1] = ave_rand;
+    double ave_rand = 0.5 * (randoms[0][0] + randoms[1][1]);
+    randoms[0][0] = randoms[1][1] = ave_rand;
   } else if (pcouple == YZ) {
     double ave = 0.5 * (tensor[1] + tensor[2]);
     p_current[1] = p_current[2] = ave;
     p_current[0] = tensor[0];
-    double ave_rand = 0.5 * (randoms[1] + randoms[2]);
-    randoms[1] = randoms[2] = ave_rand;
+    double ave_rand = 0.5 * (randoms[1][1] + randoms[2][2]);
+    randoms[1][1] = randoms[2][2] = ave_rand;
   } else if (pcouple == XZ) {
     double ave = 0.5 * (tensor[0] + tensor[2]);
     p_current[0] = p_current[2] = ave;
     p_current[1] = tensor[1];
-    double ave_rand = 0.5 * (randoms[0] + randoms[2]);
-    randoms[0] = randoms[2] = ave_rand;
+    double ave_rand = 0.5 * (randoms[0][0] + randoms[2][2]);
+    randoms[0][0] = randoms[2][2] = ave_rand;
   } else {
     p_current[0] = tensor[0];
     p_current[1] = tensor[1];
@@ -711,7 +719,6 @@ void FixPressCRescale::remap()
     // rescale velocities
 
     double v_rescaled[3] = {};
-    double dilation_inv[6] = {};
     inverse_matrix(dilation,dilation_inv);
     if (which == NOBIAS) {
       for (i = 0; i < nlocal; i++) {
@@ -865,7 +872,7 @@ void FixPressCRescale::compute_sigma()
   }
 
   // generate upper-triangular half of
-  // sigma = h0inv*(p_target-p_hydro)*h0inv^t
+  // sigma = vol0*h0inv*(p_target-p_hydro)*h0inv^t
   // units of sigma are are PV/L^2 e.g. atm.A
   //
   // [ 0 5 4 ]   [ 0 5 4 ] [ 0 5 4 ] [ 0 - - ]
@@ -900,7 +907,7 @@ void FixPressCRescale::compute_sigma()
 }
 
 /* ----------------------------------------------------------------------
-   compute deviatoric barostat pressure = h*sigma*h^t
+   compute deviatoric barostat force = h*sigma*h^t
 -----------------------------------------------------------------------*/
 
 void FixPressCRescale::compute_deviatoric()
@@ -935,13 +942,56 @@ void FixPressCRescale::compute_deviatoric()
     h[4]*(              sigma[3]*h[1]+sigma[2]*h[3]);
 }
 
-/* ---------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------- 
+   construct full 3x3 matrix from upper triangular part (represented
+   in Voigt order)
+-----------------------------------------------------------------------*/
 
-void FixPressCRescale::matrix_prod(double *in1, double *in2, double *out) 
+void FixPressCRescale::voigt2fullmatrix(double in[6], double out[3][3], bool symmetric)
 {
-  // compute matrix product in1 * in2, where matrices 'in1' and 'in2' are upper triangular
-  // (represented in Voigt order)
+  out[0][0] = in[0];
+  out[1][1] = in[1];
+  out[2][2] = in[2];
+  out[1][2] = in[3];
+  out[0][2] = in[4];
+  out[0][1] = in[5];
+  if (symmetric) {             
+    out[1][0] = out[0][1];    //       [ 0 5 4 ]
+    out[2][0] = out[0][2];    // out : [ 5 1 3 ]
+    out[2][1] = out[1][2];    //       [ 4 3 2 ]
+  }
+  else {
+    out[1][0] = 0.0;          //       [ 0 5 4 ]
+    out[2][0] = 0.0;          // out : [ - 1 3 ] 
+    out[2][1] = 0.0;          //       [ - - 2 ]
+  }   
+}
 
+/* ---------------------------------------------------------------------- 
+  compute the matrix product in1.in2, where 'in1' and 'in2' are full 3x3 
+  matrices
+-----------------------------------------------------------------------*/
+
+void FixPressCRescale::matrix_prod(double in1[3][3], double in2[3][3], double out[3][3]) 
+{
+  out[0][0] = in1[0][0]*in2[0][0] + in1[0][1]*in2[1][0] + in1[0][2]*in2[2][0];
+  out[1][0] = in1[1][0]*in2[0][0] + in1[1][1]*in2[1][0] + in1[1][2]*in2[2][0];
+  out[2][0] = in1[2][0]*in2[0][0] + in1[2][1]*in2[1][0] + in1[2][2]*in2[2][0];
+  out[0][1] = in1[0][0]*in2[0][1] + in1[0][1]*in2[1][1] + in1[0][2]*in2[2][1];
+  out[1][1] = in1[1][0]*in2[0][1] + in1[1][1]*in2[1][1] + in1[1][2]*in2[2][1];
+  out[2][1] = in1[2][0]*in2[0][1] + in1[2][1]*in2[1][1] + in1[2][2]*in2[2][1];
+  out[0][2] = in1[0][0]*in2[0][2] + in1[0][1]*in2[1][2] + in1[0][2]*in2[2][2];
+  out[1][2] = in1[1][0]*in2[0][2] + in1[1][1]*in2[1][2] + in1[1][2]*in2[2][2];
+  out[2][2] = in1[2][0]*in2[0][2] + in1[2][1]*in2[1][2] + in1[2][2]*in2[2][2];
+}
+
+/* ---------------------------------------------------------------------- 
+  compute the matrix product in1.in2, where matrices 'in1' and 'in2' are 
+  both upper triangular (represented in Voigt order)
+-----------------------------------------------------------------------*/
+
+void FixPressCRescale::matrix_prod(double in1[6], double in2[6], double out[6]) 
+{
   out[0] = in1[0] * in2[0];
   out[1] = in1[1] * in2[1];
   out[2] = in1[2] * in2[2];
@@ -950,24 +1000,42 @@ void FixPressCRescale::matrix_prod(double *in1, double *in2, double *out)
   out[5] = in1[0] * in2[5] + in1[5] * in2[1];
 }
 
-/* ---------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------- 
+  rotates the column vectors of 'in' to obtain the upper triangular 
+  matrix 'out', represented in Voigt order
+-----------------------------------------------------------------------*/
 
-void FixPressCRescale::vector_matrix_prod(double *in_v, double *in_m, double *out_v) 
+void FixPressCRescale::backrotate(double in[3][3], double out[6])
 {
-  // compute vector-matrix product in_v * in_m, where 'in_m' is upper triangular
-  // (represented in Voigt order)
+  out[0] = std::sqrt(in[0][0]*in[0][0] + in[1][0]*in[1][0] + in[2][0]*in[2][0]);
+  out[5] = (in[0][0]*in[0][1] + in[1][0]*in[1][1] + in[2][0]*in[2][1]) / out[0];
+  out[1] = std::sqrt(in[0][1]*in[0][1] + in[1][1]*in[1][1] 
+             + in[2][1]*in[2][1] - out[5]*out[5]);
+  out[4] = (in[0][0]*in[0][2] + in[1][0]*in[1][2] + in[2][0]*in[2][2]) / out[0];
+  out[3] = (in[0][1]*in[0][2] + in[1][1]*in[1][2]
+             + in[2][1]*in[2][2] - out[4]*out[5]) / out[1];
+  out[2] = std::sqrt(in[0][2]*in[0][2] + in[1][2]*in[1][2] 
+             + in[2][2]*in[2][2] - out[4]*out[4] - out[3]*out[3]);
+}
 
+/* ---------------------------------------------------------------------- 
+  compute vector-matrix product in_v.in_m, where 'in_m' is upper 
+  triangular (represented in Voigt order)
+-----------------------------------------------------------------------*/
+
+void FixPressCRescale::vector_matrix_prod(double in_v[3], double in_m[6], double out_v[3]) 
+{
   out_v[0] = in_v[0] * in_m[0];
   out_v[1] = in_v[0] * in_m[5] + in_v[1] * in_m[1];
   out_v[2] = in_v[0] * in_m[4] + in_v[1] * in_m[3] + in_v[2] * in_m[2];  
 }
 
-/* ---------------------------------------------------------------------- */
+/* ---------------------------------------------------------------------- 
+  invert upper triangular matrix 'in' (represented in Voigt order)
+-----------------------------------------------------------------------*/
 
-void FixPressCRescale::inverse_matrix(double *in, double *out) 
+void FixPressCRescale::inverse_matrix(double in[6], double out[6]) 
 {
-  // invert upper triangular matrix 'in' (represented in Voigt order)
-
   out[0] = 1/in[0];
   out[1] = 1/in[1];
   out[2] = 1/in[2];

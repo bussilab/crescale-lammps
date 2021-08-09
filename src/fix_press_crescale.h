@@ -37,23 +37,30 @@ class FixPressCRescale : public Fix {
  protected:
   int dimension,which;
   double bulkmodulus;
-  double kt;
+  double ktv;
   double noise_prefactor, determ_prefactor;
-  double vol0;                     // reference volume
+  double vol0;                          // reference volume
 
   double t_start,t_stop;
   double t_target;
 
   int pstyle,pcouple,allremap;
-  int p_flag[6];                   // 1 if control P on this dim, 0 if not
+  int p_flag[6];                        // 1 if control P on this dim, 0 if not
   double p_start[6],p_stop[6];
   double p_period[6],p_target[6];
   double p_period_global;
-  double p_current[6],dilation[6];
-  double randoms[6];
-  int kspace_flag;                 // 1 if KSpace invoked, 0 if not
-  int nrigid;                      // number of rigid fixes
-  int *rfix;                       // indices of rigid fixes
+  double p_current[6];
+  double p_current_full[3][3];          // full symmetric pressure tensor 
+  double dilation[6],dilation_inv[6];   // rescaling matrices 
+  double h_full[3][3],h_inv_full[3][3]; // full box matrix and its inverse 
+  double randoms[3][3];                 // random numbers tensor
+  double hnew_full[3][3];               // updated box with rotations
+  double p_times_h[3][3];
+  double fdev_times_h[3][3];
+  double randoms_times_h[3][3];
+  int kspace_flag;                      // 1 if KSpace invoked, 0 if not
+  int nrigid;                           // number of rigid fixes
+  int *rfix;                            // indices of rigid fixes
 
   char *id_temp,*id_press;
   class Compute *temperature,*pressure;
@@ -63,7 +70,9 @@ class FixPressCRescale : public Fix {
   int pdim;                        // number of barostatted dims
 
   double sigma[6];                 // scaled target stress
-  double fdev[6];                  // deviatoric force on barostat
+  double fdev[6];                  // deviatoric force on barostat   
+  double fdev_full[3][3];          // full symmetric deviatoric force
+  int deviatoric_flag;             // 0 if target stress tensor is hydrostatic
   double h0_inv[6];                // h_inv of reference (zero strain) box
   int nreset_h0;                   // interval for resetting h0
 
@@ -77,9 +86,13 @@ class FixPressCRescale : public Fix {
   void compute_press_target();
   void compute_sigma();
   void compute_deviatoric();
-  void matrix_prod(double*, double*, double*);
-  void vector_matrix_prod(double*, double*, double*);
-  void inverse_matrix(double*, double*);
+
+  void voigt2fullmatrix(double[6], double[3][3], bool);
+  void matrix_prod(double[3][3], double[3][3], double[3][3]);
+  void matrix_prod(double[6], double[6], double[6]);
+  void backrotate(double[3][3], double[6]);
+  void vector_matrix_prod(double[3], double[6], double[3]);
+  void inverse_matrix(double[6], double[6]);
 };
 
 }
