@@ -52,12 +52,7 @@ class FixPressCRescale : public Fix {
   double p_current[6];
   double p_current_full[3][3];          // full symmetric pressure tensor 
   double dilation[6],dilation_inv[6];   // rescaling matrices 
-  double h_full[3][3],h_inv_full[3][3]; // full box matrix and its inverse 
   double randoms[3][3];                 // random numbers tensor
-  double hnew_full[3][3];               // updated box with rotations
-  double p_times_h[3][3];
-  double fdev_times_h[3][3];
-  double randoms_times_h[3][3];
   int kspace_flag;                      // 1 if KSpace invoked, 0 if not
   int nrigid;                           // number of rigid fixes
   int *rfix;                            // indices of rigid fixes

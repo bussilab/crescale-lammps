@@ -518,8 +518,8 @@ void FixPressCRescale::end_of_step()
       dilation[i] = 1.0;
       if (p_flag[i]) {
         dilation[i] += 
-            - determ_prefactor/p_period[i] * (p_hydro-p_current[i]-ktv)
-            + noise_prefactor/sqrt(p_period[i]) * randoms[i][i];
+          - determ_prefactor/p_period[i] * (p_hydro-p_current[i]-ktv)
+          + noise_prefactor/sqrt(p_period[i]) * randoms[i][i];
         if (deviatoric_flag) 
           dilation[i] -= determ_prefactor/(p_period[i]*volume) * fdev[i];
       }
@@ -530,30 +530,24 @@ void FixPressCRescale::end_of_step()
   } else {
     noise_prefactor = sqrt(2.0*ktv*update->dt/(pdim*bulkmodulus*p_period_global));
     determ_prefactor = update->dt/(pdim*bulkmodulus*p_period_global);
-    voigt2fullmatrix(domain->h,h_full,false); 
-    voigt2fullmatrix(domain->h_inv,h_inv_full,false);
+    double dilation_full[3][3] = {{1. - determ_prefactor*(p_hydro - ktv),0.,0.},
+                                  {0.,1. - determ_prefactor*(p_hydro - ktv),0.},
+                                  {0.,0.,1. - determ_prefactor*(p_hydro - ktv)}};
     voigt2fullmatrix(p_current,p_current_full,true);
-    matrix_prod(p_current_full,h_full,p_times_h);
-    matrix_prod(randoms,h_full,randoms_times_h);
 
     if (deviatoric_flag) {
       voigt2fullmatrix(fdev,fdev_full,true);
-      matrix_prod(fdev_full,h_full,fdev_times_h);
     }
 
     for (i = 0; i < 3; i++) { 
       for (j = 0; j < 3; j++) {
-        hnew_full[i][j] = h_full[i][j] 
-          - determ_prefactor * ((p_hydro-ktv)*h_full[i][j] - p_times_h[i][j])
-          + noise_prefactor * randoms_times_h[i][j];
-        if (deviatoric_flag)
-          hnew_full[i][j] -= determ_prefactor/volume * fdev_times_h[i][j];
+          dilation_full[i][j] += determ_prefactor * p_current_full[i][j]
+                                 + noise_prefactor * randoms[i][j];
+          if (deviatoric_flag)
+            dilation_full[i][j] -= determ_prefactor/volume * fdev_full[i][j];
       }
     }
-
-    double dilation_with_rotations[3][3];
-    matrix_prod(hnew_full,h_inv_full,dilation_with_rotations);
-    backrotate(dilation_with_rotations,dilation);
+    backrotate(dilation_full,dilation);
   }
  
   MPI_Bcast(&dilation[0],6,MPI_DOUBLE,0,world);
@@ -965,24 +959,6 @@ void FixPressCRescale::voigt2fullmatrix(double in[6], double out[3][3], bool sym
     out[2][0] = 0.0;          // out : [ - 1 3 ] 
     out[2][1] = 0.0;          //       [ - - 2 ]
   }   
-}
-
-/* ---------------------------------------------------------------------- 
-  compute the matrix product in1.in2, where 'in1' and 'in2' are full 3x3 
-  matrices
------------------------------------------------------------------------*/
-
-void FixPressCRescale::matrix_prod(double in1[3][3], double in2[3][3], double out[3][3]) 
-{
-  out[0][0] = in1[0][0]*in2[0][0] + in1[0][1]*in2[1][0] + in1[0][2]*in2[2][0];
-  out[1][0] = in1[1][0]*in2[0][0] + in1[1][1]*in2[1][0] + in1[1][2]*in2[2][0];
-  out[2][0] = in1[2][0]*in2[0][0] + in1[2][1]*in2[1][0] + in1[2][2]*in2[2][0];
-  out[0][1] = in1[0][0]*in2[0][1] + in1[0][1]*in2[1][1] + in1[0][2]*in2[2][1];
-  out[1][1] = in1[1][0]*in2[0][1] + in1[1][1]*in2[1][1] + in1[1][2]*in2[2][1];
-  out[2][1] = in1[2][0]*in2[0][1] + in1[2][1]*in2[1][1] + in1[2][2]*in2[2][1];
-  out[0][2] = in1[0][0]*in2[0][2] + in1[0][1]*in2[1][2] + in1[0][2]*in2[2][2];
-  out[1][2] = in1[1][0]*in2[0][2] + in1[1][1]*in2[1][2] + in1[1][2]*in2[2][2];
-  out[2][2] = in1[2][0]*in2[0][2] + in1[2][1]*in2[1][2] + in1[2][2]*in2[2][2];
 }
 
 /* ---------------------------------------------------------------------- 
